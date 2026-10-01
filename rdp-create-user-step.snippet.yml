@@ -1,0 +1,47 @@
+# Paste this step into your workflow (e.g. .github/workflows/rdp.yml) on windows-latest.
+# Replaces a failing "Create RDP User" step that calls New-LocalUser without relaxing policy.
+
+      - name: Create RDP User
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $username = 'RDP'
+          $password = 'agkalitsa'
+
+          # GitHub-hosted Windows images enforce password complexity (upper/lower/digit/symbol).
+          # "agkalitsa" is lowercase-only → New-LocalUser throws InvalidPasswordException.
+          # Relax policy on this ephemeral VM only (standard Actions pattern).
+          $inf = Join-Path $env:TEMP 'gh-disable-password-complexity.inf'
+          $sdb = Join-Path $env:TEMP 'gh-disable-password-complexity.sdb'
+          @"
+          [Unicode]
+          Unicode=yes
+          [Version]
+          signature=`"`$CHICAGO`$`"
+          Revision=1
+          [System Access]
+          PasswordComplexity = 0
+          MinimumPasswordLength = 0
+          "@ | Set-Content -Path $inf -Encoding Unicode
+
+          secedit /configure /db $sdb /cfg $inf /areas SECURITYPOLICY
+          if ($LASTEXITCODE -ne 0) { throw "secedit failed with exit code $LASTEXITCODE" }
+          Start-Sleep -Seconds 3
+
+          if (Get-LocalUser -Name $username -ErrorAction SilentlyContinue) {
+            Remove-LocalUser -Name $username
+          }
+
+          $secure = ConvertTo-SecureString $password -AsPlainText -Force
+          New-LocalUser -Name $username -Password $secure -FullName 'RDP User' -PasswordNeverExpires
+
+          Add-LocalGroupMember -Group 'Remote Desktop Users' -Member $username
+          Add-LocalGroupMember -Group 'Administrators' -Member $username -ErrorAction SilentlyContinue
+
+          Write-Host "Local user '$username' created and added to Remote Desktop Users."
+
+# Alternative (same policy block required above):
+#   net user RDP agkalitsa /add /Y
+#   net user RDP /PasswordChg:No /Expires:Never
+#   net localgroup "Remote Desktop Users" RDP /add

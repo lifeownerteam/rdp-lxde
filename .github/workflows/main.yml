@@ -1,0 +1,14 @@
+# Placeholder only. RDP workflows live in rdp-windows.yml and rdp-alpine-openbox.yml.
+# Do not paste rdp-workflows.txt here — its header lines are not valid workflow YAML.
+
+name: Main (placeholder)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  noop:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Info
+        run: echo "No default CI. Run workflow_dispatch on RDP Windows or RDP Alpine Openbox."

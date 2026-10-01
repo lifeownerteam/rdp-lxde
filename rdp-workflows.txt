@@ -1,0 +1,330 @@
+﻿# NOTE: This is a combined reference file only — NOT a GitHub Actions workflow.
+# Copy each section into .github/workflows/rdp-windows.yml or rdp-alpine-openbox.yml.
+# Never commit this file (or its header block) as .github/workflows/main.yml — line 3
+# contains "workflow name: ..." which breaks YAML parsing on GitHub.
+
+================================================================================
+RDP Windows — .github/workflows/rdp-windows.yml
+Native Windows RDP on windows-latest (workflow name: RDP Windows)
+================================================================================
+# Native Windows RDP (port 3389) + Tailscale on windows-latest.
+
+name: RDP Windows
+
+on:
+  workflow_dispatch:
+
+jobs:
+  secure-rdp:
+    runs-on: windows-latest
+    timeout-minutes: 3600
+
+    steps:
+      - name: Configure Core RDP Settings
+        run: |
+          # Enable Remote Desktop and disable Network Level Authentication (if needed)
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
+                             -Name "fDenyTSConnections" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
+                             -Name "UserAuthentication" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
+                             -Name "SecurityLayer" -Value 0 -Force
+
+          # Remove any existing rule with the same name to avoid duplication
+          netsh advfirewall firewall delete rule name="RDP-Tailscale"
+
+          # For testing, allow any incoming connection on port 3389
+          netsh advfirewall firewall add rule name="RDP-Tailscale" `
+            dir=in action=allow protocol=TCP localport=3389
+
+          # (Optional) Restart the Remote Desktop service to ensure changes take effect
+          Restart-Service -Name TermService -Force
+
+      - name: Create RDP User with Secure Password
+        run: |
+          $password = 'agkalitsa'
+          $securePass = ConvertTo-SecureString $password -AsPlainText -Force
+          if (Get-LocalUser -Name "RDP" -ErrorAction SilentlyContinue) {
+            Remove-LocalUser -Name "RDP"
+          }
+          New-LocalUser -Name "RDP" -Password $securePass -AccountNeverExpires
+          Add-LocalGroupMember -Group "Administrators" -Member "RDP"
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP"
+
+          echo "RDP_CREDS=User: RDP | Password: agkalitsa" >> $env:GITHUB_ENV
+
+          if (-not (Get-LocalUser -Name "RDP")) {
+              Write-Error "User creation failed"
+              exit 1
+          }
+
+      - name: Install Tailscale
+        run: |
+          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
+          $installerPath = "$env:TEMP\tailscale.msi"
+
+          Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath
+          Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
+          Remove-Item $installerPath -Force
+
+      - name: Establish Tailscale Connection
+        run: |
+          # Bring up Tailscale with the provided auth key and set a unique hostname
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-$env:GITHUB_RUN_ID
+
+          # Wait for Tailscale to assign an IP
+          $tsIP = $null
+          $retries = 0
+          while (-not $tsIP -and $retries -lt 10) {
+              $tsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
+              Start-Sleep -Seconds 5
+              $retries++
+          }
+
+          if (-not $tsIP) {
+              Write-Error "Tailscale IP not assigned. Exiting."
+              exit 1
+          }
+          echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
+
+      - name: Verify RDP Accessibility
+        run: |
+          Write-Host "Tailscale IP: $env:TAILSCALE_IP"
+
+          # Test connectivity using Test-NetConnection against the Tailscale IP on port 3389
+          $testResult = Test-NetConnection -ComputerName $env:TAILSCALE_IP -Port 3389
+          if (-not $testResult.TcpTestSucceeded) {
+              Write-Error "TCP connection to RDP port 3389 failed"
+              exit 1
+          }
+          Write-Host "TCP connectivity successful!"
+
+      - name: Maintain Connection
+        run: |
+          Write-Host "`n=== RDP ACCESS ==="
+          Write-Host "Address: $env:TAILSCALE_IP"
+          Write-Host "Username: RDP"
+          Write-Host "Password: agkalitsa"
+          Write-Host "==================`n"
+
+          # Keep runner active indefinitely (or until manually cancelled)
+          while ($true) {
+              Write-Host "[$(Get-Date)] RDP Active - Use Ctrl+C in workflow to terminate"
+              Start-Sleep -Seconds 300
+          }
+
+================================================================================
+RDP Alpine Openbox — .github/workflows/rdp-alpine-openbox.yml
+Ubuntu 22.04 + LXDE (Lubuntu-style) + xRDP Xorg — workflow name: RDP Linux Desktop (LXDE) — file: rdp-alpine-openbox.yml
+================================================================================
+# Openbox on Alpine 3.20 + xRDP (port 3389), Tailscale on the ubuntu-latest host.
+#
+# GHA layout (recommended):
+#   - Host (ubuntu-latest): Tailscale â€” GitHub-hosted runners expose /dev/net/tun for tailscaled.
+#   - Container (alpine:3.20): openbox + xrdp; publish 3389:3389 to the host.
+#   - Connect with any RDP client to TAILSCALE_IP:3389 (same as the Windows workflow).
+#
+# Container flags used here: -p 3389:3389 only (no --privileged required for this layout).
+#
+# If you move Tailscale into Alpine instead, use:
+#   docker run --network host --privileged --cap-add=NET_ADMIN --device /dev/net/tun ...
+#
+# VNC fallback (if xrdp is flaky on your fork): apk add xvfb x11vnc; run
+#   xvfb-run -a x11vnc -forever -shared -rfbport 5900 -nopw
+#   verify 5900 and connect to TAILSCALE_IP:5900 with a VNC client.
+
+name: RDP Alpine Openbox
+
+on:
+  workflow_dispatch:
+
+env:
+  RDP_USERNAME: RDP
+  RDP_PASSWORD: agkalitsa
+  RDP_PORT: "3389"
+  ALPINE_IMAGE: alpine:3.20
+  CONTAINER_NAME: rdp-alpine-openbox
+
+jobs:
+  secure-rdp:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3600
+
+    steps:
+      - name: Configure Core RDP Settings
+        run: |
+          set -euo pipefail
+
+          docker pull "${ALPINE_IMAGE}"
+          docker rm -f "${CONTAINER_NAME}" 2>/dev/null || true
+          docker run -d --name "${CONTAINER_NAME}" \
+            -p "${RDP_PORT}:3389" \
+            "${ALPINE_IMAGE}" \
+            sleep infinity
+
+          cat >/tmp/xrdp-startwm.sh <<'EOF'
+          #!/bin/sh
+          unset DBUS_SESSION_BUS_ADDRESS
+          unset XDG_RUNTIME_DIR
+          if test -r /etc/profile; then
+            . /etc/profile
+          fi
+          if test -x "/home/${USER}/.xsession"; then
+            exec "/home/${USER}/.xsession"
+          fi
+          exec openbox-session
+          EOF
+          sed -i 's/^[[:space:]]*//' /tmp/xrdp-startwm.sh
+
+          docker exec "${CONTAINER_NAME}" sh -euc '
+            apk add --no-cache openssl openrc
+
+            apk add --no-cache \
+              openbox \
+              xrdp \
+              xorg-server \
+              xf86-video-dummy \
+              dbus \
+              ttf-dejavu \
+              mesa-gl \
+              sudo
+
+            mkdir -p /run/openrc /var/run/dbus
+            touch /run/openrc/softlevel
+
+            if ! test -s /etc/xrdp/rsakeys.ini 2>/dev/null; then
+              /usr/sbin/xrdp-keygen xrdp auto 512 /etc/xrdp/rsakeys.ini \
+                || /usr/sbin/xrdp-keygen xrdp auto
+            fi
+
+            sed -i "s/^;enable_user_wallet=.*/enable_user_wallet=false/" /etc/xrdp/sesman.ini || true
+          '
+
+          docker cp /tmp/xrdp-startwm.sh "${CONTAINER_NAME}:/etc/xrdp/startwm.sh"
+          docker exec "${CONTAINER_NAME}" chmod +x /etc/xrdp/startwm.sh
+
+          docker exec "${CONTAINER_NAME}" sh -euc '
+            start_xrdp_stack() {
+              mkdir -p /run/openrc /var/run/dbus
+              touch /run/openrc/softlevel
+              if command -v rc-service >/dev/null 2>&1; then
+                rc-service dbus start 2>/dev/null || dbus-daemon --system --fork
+                rc-service xrdp-sesman start 2>/dev/null || xrdp-sesman &
+                rc-service xrdp start 2>/dev/null || xrdp &
+              else
+                dbus-daemon --system --fork
+                xrdp-sesman &
+                xrdp &
+              fi
+            }
+            start_xrdp_stack
+          '
+
+          echo "Alpine xRDP listening on host port ${RDP_PORT}"
+
+      - name: Create RDP User with Secure Password
+        run: |
+          set -euo pipefail
+
+          docker exec "${CONTAINER_NAME}" sh -euc "
+            id ${RDP_USERNAME} >/dev/null 2>&1 || adduser -D -s /bin/sh ${RDP_USERNAME}
+            echo '${RDP_USERNAME}:${RDP_PASSWORD}' | chpasswd
+            mkdir -p /home/${RDP_USERNAME}
+            printf '%s\n' 'exec openbox-session' > /home/${RDP_USERNAME}/.xsession
+            chmod +x /home/${RDP_USERNAME}/.xsession
+            chown -R ${RDP_USERNAME}:${RDP_USERNAME} /home/${RDP_USERNAME}
+          "
+
+          echo "RDP_CREDS=User: ${RDP_USERNAME} | Password: ${RDP_PASSWORD}" >> "$GITHUB_ENV"
+
+          docker exec "${CONTAINER_NAME}" id "${RDP_USERNAME}"
+
+          docker exec "${CONTAINER_NAME}" sh -euc '
+            restart_xrdp_stack() {
+              mkdir -p /run/openrc /var/run/dbus
+              touch /run/openrc/softlevel
+              if command -v rc-service >/dev/null 2>&1; then
+                rc-service xrdp-sesman restart 2>/dev/null \
+                  || rc-service xrdp-sesman start 2>/dev/null \
+                  || xrdp-sesman &
+                rc-service xrdp restart 2>/dev/null \
+                  || rc-service xrdp start 2>/dev/null \
+                  || xrdp &
+              else
+                pkill -x xrdp-sesman 2>/dev/null || true
+                pkill -x xrdp 2>/dev/null || true
+                sleep 1
+                dbus-daemon --system --fork 2>/dev/null || true
+                xrdp-sesman &
+                xrdp &
+              fi
+            }
+            restart_xrdp_stack
+          '
+
+      - name: Install Tailscale
+        run: |
+          set -euo pipefail
+          curl -fsSL https://tailscale.com/install.sh | sh
+
+      - name: Establish Tailscale Connection
+        run: |
+          set -euo pipefail
+
+          sudo tailscale up \
+            --authkey="${{ secrets.TAILSCALE_AUTH_KEY }}" \
+            --hostname="gh-runner-${GITHUB_RUN_ID}"
+
+          ts_ip=""
+          retries=0
+          while [ -z "$ts_ip" ] && [ "$retries" -lt 10 ]; do
+            ts_ip="$(tailscale ip -4 2>/dev/null || true)"
+            if [ -z "$ts_ip" ]; then
+              sleep 5
+              retries=$((retries + 1))
+            fi
+          done
+
+          if [ -z "$ts_ip" ]; then
+            echo "Tailscale IP not assigned. Exiting."
+            exit 1
+          fi
+
+          echo "TAILSCALE_IP=$ts_ip" >> "$GITHUB_ENV"
+
+      - name: Verify RDP Accessibility
+        run: |
+          set -euo pipefail
+
+          echo "Tailscale IP: ${TAILSCALE_IP}"
+
+          if ! timeout 15 bash -c "until nc -z 127.0.0.1 ${RDP_PORT}; do sleep 1; done"; then
+            echo "TCP connection to local xRDP port ${RDP_PORT} failed"
+            docker logs "${CONTAINER_NAME}" 2>&1 | tail -n 80 || true
+            exit 1
+          fi
+
+          if ! timeout 15 bash -c "until nc -z ${TAILSCALE_IP} ${RDP_PORT}; do sleep 1; done"; then
+            echo "TCP connection to RDP port ${RDP_PORT} on Tailscale IP failed"
+            exit 1
+          fi
+
+          echo "TCP connectivity successful!"
+
+      - name: Maintain Connection
+        run: |
+          echo ""
+          echo "=== RDP ACCESS (Alpine + Openbox / xRDP) ==="
+          echo "Address: ${TAILSCALE_IP}:${RDP_PORT}"
+          echo "Username: ${RDP_USERNAME}"
+          echo "Password: ${RDP_PASSWORD}"
+          echo "${RDP_CREDS}"
+          echo "Session: Openbox (via ~/.xsession)"
+          echo "==========================================="
+          echo ""
+
+          while true; do
+            echo "[$(date -Is)] RDP Active - Cancel workflow run to terminate"
+            sleep 300
+          done
+

@@ -1,0 +1,16 @@
+# RDP GHA repo — ignore everything except tracked workflow paths
+*
+!.gitignore
+!README-RDP-GHA.md
+!.github/
+!.github/workflows/
+!.github/workflows/*.yml
+!scripts/
+!scripts/set-tailscale-github-secret.ps1
+!scripts/.gitignore
+
+# Secrets and local env
+.env
+.env.*
+*.local
+**/ngrok-token.local

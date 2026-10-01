@@ -1,0 +1,291 @@
+# Ubuntu 22.04 + LXDE (Lubuntu-style) + xRDP on ubuntu-latest host, Tailscale on host.
+# Connect: TAILSCALE_IP:3389 — user RDP / password from env.
+
+name: RDP Linux Desktop (LXDE)
+
+on:
+  workflow_dispatch:
+
+env:
+  RDP_USERNAME: RDP
+  RDP_PASSWORD: agkalitsa
+  RDP_PORT: "3389"
+  DESKTOP_IMAGE: ubuntu:22.04
+  CONTAINER_NAME: rdp-lxde
+
+jobs:
+  secure-rdp:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3600
+
+    steps:
+      - name: Configure Core RDP Settings
+        run: |
+          set -euo pipefail
+
+          docker pull "${DESKTOP_IMAGE}"
+          docker rm -f "${CONTAINER_NAME}" 2>/dev/null || true
+          docker run -d --name "${CONTAINER_NAME}" \
+            -p "${RDP_PORT}:3389" \
+            "${DESKTOP_IMAGE}" \
+            sleep infinity
+
+          cat >/tmp/xrdp-startwm.sh <<'EOF'
+          #!/bin/sh
+          unset DBUS_SESSION_BUS_ADDRESS
+          unset XDG_RUNTIME_DIR
+          export LANG="${LANG:-C.UTF-8}"
+          if test -r /etc/profile; then
+            . /etc/profile
+          fi
+          mkdir -p /tmp/.X11-unix
+          chmod 1777 /tmp 2>/dev/null || true
+          if test -x "/home/${USER}/.xsession"; then
+            exec dbus-launch --exit-with-session /bin/sh "/home/${USER}/.xsession"
+          fi
+          if command -v startlxde >/dev/null 2>&1; then
+            exec dbus-launch --exit-with-session startlxde
+          fi
+          exec dbus-launch --exit-with-session lxsession -s LXDE
+          EOF
+          sed -i 's/^[[:space:]]*//' /tmp/xrdp-startwm.sh
+
+          docker exec "${CONTAINER_NAME}" bash -euc '
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update
+            apt-get install -y --no-install-recommends \
+              dbus dbus-x11 policykit-1 \
+              xrdp xorgxrdp \
+              xserver-xorg-core xserver-xorg-video-dummy \
+              x11-xserver-utils x11-utils xauth \
+              lxde-core lxsession lxpanel pcmanfm lxterminal openbox \
+              xterm \
+              ssl-cert sudo \
+              iproute2 netcat-openbsd procps xvfb \
+              ca-certificates bzip2 curl wget xz-utils \
+              libgtk-3-0 libdbus-glib-1-2 libasound2
+
+            mkdir -p /opt
+            ff_url="$(curl -fsSLI -o /dev/null -w "%{url_effective}" "https://download.mozilla.org/?product=firefox-latest-ssl&os=linux64&lang=en-US")"
+            case "$ff_url" in
+              *.tar.bz2)
+                curl -fsSL "$ff_url" -o /tmp/firefox.tarball
+                tar -xjf /tmp/firefox.tarball -C /opt/
+                ;;
+              *.tar.xz)
+                curl -fsSL "$ff_url" -o /tmp/firefox.tarball
+                tar -xJf /tmp/firefox.tarball -C /opt/
+                ;;
+              *)
+                curl -fsSL "$ff_url" -o /tmp/firefox.tarball
+                tar -xf /tmp/firefox.tarball -C /opt/
+                ;;
+            esac
+            ln -sf /opt/firefox/firefox /usr/local/bin/firefox
+            rm -f /tmp/firefox.tarball
+            test -x /opt/firefox/firefox
+            /opt/firefox/firefox --version >/dev/null
+
+            mkdir -p /var/run/dbus /tmp/.X11-unix
+            chmod 1777 /tmp
+
+            if grep -q "^max_bpp=" /etc/xrdp/xrdp.ini; then
+              sed -i "s/^max_bpp=.*/max_bpp=32/" /etc/xrdp/xrdp.ini
+            else
+              sed -i "/^\[Globals\]/a max_bpp=32" /etc/xrdp/xrdp.ini
+            fi
+            if grep -q "^autorun=" /etc/xrdp/xrdp.ini; then
+              sed -i "s/^autorun=.*/autorun=Xorg/" /etc/xrdp/xrdp.ini
+            else
+              sed -i "/^\[Globals\]/a autorun=Xorg" /etc/xrdp/xrdp.ini
+            fi
+
+            sed -i "s/^;enable_user_wallet=.*/enable_user_wallet=false/" /etc/xrdp/sesman.ini || true
+            sed -i "s/^EnableUserWindowManager=.*/EnableUserWindowManager=true/" /etc/xrdp/sesman.ini || true
+            sed -i "s|^DefaultWindowManager=.*|DefaultWindowManager=/etc/xrdp/startwm.sh|" /etc/xrdp/sesman.ini || true
+            sed -i "s|^UserWindowManager=.*|UserWindowManager=/etc/xrdp/startwm.sh|" /etc/xrdp/sesman.ini || true
+
+            adduser xrdp ssl-cert 2>/dev/null || true
+            printf "%s\n" "allowed_users=anybody" > /etc/X11/Xwrapper.config
+          '
+
+          docker cp /tmp/xrdp-startwm.sh "${CONTAINER_NAME}:/etc/xrdp/startwm.sh"
+          docker exec "${CONTAINER_NAME}" chmod +x /etc/xrdp/startwm.sh
+          docker exec "${CONTAINER_NAME}" cp /etc/xrdp/startwm.sh /etc/xrdp/reconnectwm.sh
+          docker exec "${CONTAINER_NAME}" chmod +x /etc/xrdp/reconnectwm.sh
+
+          docker exec "${CONTAINER_NAME}" bash -euc '
+            start_xrdp_stack() {
+              mkdir -p /var/run/dbus /tmp/.X11-unix
+              chmod 1777 /tmp
+              if ! pgrep -x dbus-daemon >/dev/null 2>&1; then
+                dbus-daemon --system --fork
+              fi
+              pkill -x xrdp 2>/dev/null || true
+              pkill -x xrdp-sesman 2>/dev/null || true
+              sleep 1
+              /usr/sbin/xrdp-sesman &
+              /usr/sbin/xrdp &
+              sleep 2
+            }
+            start_xrdp_stack
+            ss -tlnp | grep 3389 || nc -z 127.0.0.1 3389
+          '
+
+          echo "Ubuntu LXDE xRDP listening on host port ${RDP_PORT}"
+
+      - name: Create RDP User with Secure Password
+        run: |
+          set -euo pipefail
+
+          docker exec "${CONTAINER_NAME}" bash -euc "
+            id ${RDP_USERNAME} >/dev/null 2>&1 || useradd -m -s /bin/bash ${RDP_USERNAME}
+            echo '${RDP_USERNAME}:${RDP_PASSWORD}' | chpasswd
+            usermod -aG sudo ${RDP_USERNAME}
+            usermod -aG ssl-cert ${RDP_USERNAME} 2>/dev/null || true
+            printf '%s\n' '#!/bin/sh' 'exec startlxde' > /home/${RDP_USERNAME}/.xsession
+            chmod +x /home/${RDP_USERNAME}/.xsession
+            chown -R ${RDP_USERNAME}:${RDP_USERNAME} /home/${RDP_USERNAME}
+          "
+
+          echo "RDP_CREDS=User: ${RDP_USERNAME} | Password: ${RDP_PASSWORD}" >> "$GITHUB_ENV"
+
+          docker exec "${CONTAINER_NAME}" id "${RDP_USERNAME}"
+
+          docker exec "${CONTAINER_NAME}" bash -euc "
+            echo '=== LXDE smoke test ==='
+            test -x /etc/xrdp/startwm.sh || { echo 'startwm missing'; exit 1; }
+            libxup=\$(find /usr/lib -name libxup.so 2>/dev/null | head -n1)
+            test -n \"\$libxup\" || { echo 'libxup.so missing'; exit 1; }
+            command -v startlxde lxsession lxpanel pcmanfm lxterminal xrdp firefox >/dev/null
+            groups ${RDP_USERNAME} | grep -qw sudo
+            ! grep -rq "${RDP_USERNAME}.*NOPASSWD" /etc/sudoers /etc/sudoers.d 2>/dev/null || { echo "NOPASSWD sudoers entry present"; exit 1; }
+            grep -q startlxde /home/${RDP_USERNAME}/.xsession
+            /opt/firefox/firefox --version >/dev/null
+            echo '=== Xvfb LXDE launch smoke ==='
+            export DEBIAN_FRONTEND=noninteractive
+            rm -f /tmp/.X99-lock /tmp/.X11-unix/X99 2>/dev/null || true
+            mkdir -p /tmp/.X11-unix
+            chmod 1777 /tmp
+            su - ${RDP_USERNAME} -c 'timeout 25 xvfb-run -a -s \"-screen 0 1280x720x24\" dbus-launch --exit-with-session startlxde' \
+              >/tmp/lxde-smoke.log 2>&1 || true
+            if pgrep -u ${RDP_USERNAME} lxpanel >/dev/null 2>&1 || pgrep -u ${RDP_USERNAME} pcmanfm >/dev/null 2>&1; then
+              echo 'LXDE processes running under Xvfb'
+            else
+              echo 'WARN: lxpanel/pcmanfm not seen; log tail:'
+              tail -n 30 /tmp/lxde-smoke.log 2>/dev/null || true
+            fi
+            pkill -u ${RDP_USERNAME} -x lxpanel 2>/dev/null || true
+            pkill -u ${RDP_USERNAME} -x pcmanfm 2>/dev/null || true
+            pkill -u ${RDP_USERNAME} -x openbox 2>/dev/null || true
+            echo '=== smoke test OK ==='
+          "
+
+          docker exec "${CONTAINER_NAME}" bash -euc '
+            mkdir -p /var/run/dbus /tmp/.X11-unix
+            chmod 1777 /tmp
+            if ! pgrep -x dbus-daemon >/dev/null 2>&1; then
+              dbus-daemon --system --fork
+            fi
+            pkill -x xrdp 2>/dev/null || true
+            pkill -x xrdp-sesman 2>/dev/null || true
+            sleep 1
+            /usr/sbin/xrdp-sesman &
+            /usr/sbin/xrdp &
+          '
+
+      - name: Install Tailscale
+        run: |
+          set -euo pipefail
+          curl -fsSL https://tailscale.com/install.sh | sh
+
+      - name: Establish Tailscale Connection
+        run: |
+          set -euo pipefail
+
+          sudo tailscale up \
+            --authkey="${{ secrets.TAILSCALE_AUTH_KEY }}" \
+            --hostname="gh-runner-${GITHUB_RUN_ID}"
+
+          ts_ip=""
+          retries=0
+          while [ -z "$ts_ip" ] && [ "$retries" -lt 10 ]; do
+            ts_ip="$(tailscale ip -4 2>/dev/null || true)"
+            if [ -z "$ts_ip" ]; then
+              sleep 5
+              retries=$((retries + 1))
+            fi
+          done
+
+          if [ -z "$ts_ip" ]; then
+            echo "Tailscale IP not assigned. Exiting."
+            exit 1
+          fi
+
+          echo "TAILSCALE_IP=$ts_ip" >> "$GITHUB_ENV"
+          echo "$ts_ip" > tailscale-ip.txt
+
+      - name: Publish Tailscale IP artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tailscale-ip
+          path: tailscale-ip.txt
+          retention-days: 1
+
+      - name: Verify RDP Accessibility
+        run: |
+          set -euo pipefail
+
+          echo "Tailscale IP: ${TAILSCALE_IP}"
+
+          docker exec "${CONTAINER_NAME}" bash -euc '
+            mkdir -p /var/run/dbus /tmp/.X11-unix
+            chmod 1777 /tmp
+            if ! pgrep -x dbus-daemon >/dev/null 2>&1; then
+              dbus-daemon --system --fork
+            fi
+            pkill -x xrdp 2>/dev/null || true
+            pkill -x xrdp-sesman 2>/dev/null || true
+            sleep 1
+            /usr/sbin/xrdp-sesman &
+            /usr/sbin/xrdp &
+            sleep 2
+          '
+
+          docker exec "${CONTAINER_NAME}" bash -euc '
+            libxup=$(find /usr/lib -name libxup.so 2>/dev/null | head -n1)
+            test -n "$libxup" || { echo "libxup.so missing"; exit 1; }
+            ldd "$libxup" >/dev/null 2>&1 || { echo "ldd failed for libxup.so"; exit 1; }
+            echo "xRDP Xorg session ($libxup) OK"
+          '
+
+          if ! timeout 60 bash -c "until nc -z 127.0.0.1 ${RDP_PORT}; do sleep 2; done"; then
+            echo "TCP connection to local xRDP port ${RDP_PORT} failed"
+            docker logs "${CONTAINER_NAME}" 2>&1 | tail -n 120 || true
+            exit 1
+          fi
+
+          if ! timeout 60 bash -c "until nc -z ${TAILSCALE_IP} ${RDP_PORT}; do sleep 2; done"; then
+            echo "TCP connection to RDP port ${RDP_PORT} on Tailscale IP failed"
+            exit 1
+          fi
+
+          echo "TCP connectivity successful!"
+
+      - name: Maintain Connection
+        run: |
+          echo ""
+          echo "=== RDP ACCESS (Ubuntu 22.04 + LXDE / xRDP Xorg) ==="
+          echo "Address: ${TAILSCALE_IP}:${RDP_PORT}"
+          echo "Username: ${RDP_USERNAME}"
+          echo "Password: ${RDP_PASSWORD}"
+          echo "${RDP_CREDS}"
+          echo "Session: LXDE (startlxde) — panel, menu, PCManFM, LXTerminal, Firefox"
+          echo "Sudo: user ${RDP_USERNAME} in group sudo (password same as login)"
+          echo "==========================================="
+          echo ""
+
+          while true; do
+            echo "[$(date -Is)] RDP Active - Cancel workflow run to terminate"
+            sleep 300
+          done
