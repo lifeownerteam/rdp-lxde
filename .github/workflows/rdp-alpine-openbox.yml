@@ -152,34 +152,37 @@ jobs:
 
           docker exec "${CONTAINER_NAME}" id "${RDP_USERNAME}"
 
-          docker exec "${CONTAINER_NAME}" bash -euc "
-            echo '=== LXDE smoke test ==='
-            test -x /etc/xrdp/startwm.sh || { echo 'startwm missing'; exit 1; }
-            libxup=\$(find /usr/lib -name libxup.so 2>/dev/null | head -n1)
-            test -n \"\$libxup\" || { echo 'libxup.so missing'; exit 1; }
+          docker exec -e SMOKE_USER="${RDP_USERNAME}" "${CONTAINER_NAME}" bash -euc '
+            echo "=== LXDE smoke test ==="
+            test -x /etc/xrdp/startwm.sh || { echo "startwm missing"; exit 1; }
+            libxup=$(find /usr/lib -name libxup.so 2>/dev/null | head -n1)
+            test -n "$libxup" || { echo "libxup.so missing"; exit 1; }
             command -v startlxde lxsession lxpanel pcmanfm lxterminal xrdp firefox >/dev/null
-            groups ${RDP_USERNAME} | grep -qw sudo
-            ! grep -rq "${RDP_USERNAME}.*NOPASSWD" /etc/sudoers /etc/sudoers.d 2>/dev/null || { echo "NOPASSWD sudoers entry present"; exit 1; }
-            grep -q startlxde /home/${RDP_USERNAME}/.xsession
+            groups "$SMOKE_USER" | grep -qw sudo
+            if su - "$SMOKE_USER" -c "sudo -n true" 2>/dev/null; then
+              echo "NOPASSWD sudo detected (password required for sudo)"
+              exit 1
+            fi
+            grep -q startlxde "/home/${SMOKE_USER}/.xsession"
             /opt/firefox/firefox --version >/dev/null
-            echo '=== Xvfb LXDE launch smoke ==='
+            echo "=== Xvfb LXDE launch smoke ==="
             export DEBIAN_FRONTEND=noninteractive
             rm -f /tmp/.X99-lock /tmp/.X11-unix/X99 2>/dev/null || true
             mkdir -p /tmp/.X11-unix
             chmod 1777 /tmp
-            su - ${RDP_USERNAME} -c 'timeout 25 xvfb-run -a -s \"-screen 0 1280x720x24\" dbus-launch --exit-with-session startlxde' \
+            su - "$SMOKE_USER" -c "timeout 25 xvfb-run -a -s \"-screen 0 1280x720x24\" dbus-launch --exit-with-session startlxde" \
               >/tmp/lxde-smoke.log 2>&1 || true
-            if pgrep -u ${RDP_USERNAME} lxpanel >/dev/null 2>&1 || pgrep -u ${RDP_USERNAME} pcmanfm >/dev/null 2>&1; then
-              echo 'LXDE processes running under Xvfb'
+            if pgrep -u "$SMOKE_USER" lxpanel >/dev/null 2>&1 || pgrep -u "$SMOKE_USER" pcmanfm >/dev/null 2>&1; then
+              echo "LXDE processes running under Xvfb"
             else
-              echo 'WARN: lxpanel/pcmanfm not seen; log tail:'
+              echo "WARN: lxpanel/pcmanfm not seen; log tail:"
               tail -n 30 /tmp/lxde-smoke.log 2>/dev/null || true
             fi
-            pkill -u ${RDP_USERNAME} -x lxpanel 2>/dev/null || true
-            pkill -u ${RDP_USERNAME} -x pcmanfm 2>/dev/null || true
-            pkill -u ${RDP_USERNAME} -x openbox 2>/dev/null || true
-            echo '=== smoke test OK ==='
-          "
+            pkill -u "$SMOKE_USER" -x lxpanel 2>/dev/null || true
+            pkill -u "$SMOKE_USER" -x pcmanfm 2>/dev/null || true
+            pkill -u "$SMOKE_USER" -x openbox 2>/dev/null || true
+            echo "=== smoke test OK ==="
+          '
 
           docker exec "${CONTAINER_NAME}" bash -euc '
             mkdir -p /var/run/dbus /tmp/.X11-unix
