@@ -148,6 +148,97 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  function targetOpts(body) {
+    const ips = body.ips;
+    if (Array.isArray(ips) && ips.length) {
+      return { ips, liveOnly: false };
+    }
+    return { liveOnly: true };
+  }
+
+  if (url === "/api/firefox/open" && req.method === "POST") {
+    try {
+      const body = await readJsonBody(req);
+      const state = loadState(cfg);
+      const opts = targetOpts(body);
+      const count = body.count != null ? parseInt(body.count, 10) : 1;
+      const payload = { url: body.url, count: Number.isFinite(count) ? count : 1 };
+      const results = await agents.firefoxAll(cfg, state, "/firefox/open", payload, opts);
+      sendJson(res, 200, { ok: true, ...agents.packResults(results, "firefox") });
+    } catch (err) {
+      sendJson(res, 500, { error: String(err.message || err) });
+    }
+    return;
+  }
+
+  if (url === "/api/firefox/close" && req.method === "POST") {
+    try {
+      const body = await readJsonBody(req);
+      const state = loadState(cfg);
+      const opts = targetOpts(body);
+      const keep = body.keep != null ? parseInt(body.keep, 10) : 1;
+      const results = await agents.firefoxAll(
+        cfg,
+        state,
+        "/firefox/close",
+        { all: true, keep: Number.isFinite(keep) ? keep : 1 },
+        opts
+      );
+      sendJson(res, 200, { ok: true, ...agents.packResults(results, "firefox") });
+    } catch (err) {
+      sendJson(res, 500, { error: String(err.message || err) });
+    }
+    return;
+  }
+
+  if (url === "/api/firefox/status" && req.method === "GET") {
+    try {
+      const state = loadState(cfg);
+      const results = await agents.firefoxAll(cfg, state, "/firefox/status", null, {
+        liveOnly: true,
+        method: "GET",
+      });
+      sendJson(res, 200, { ok: true, ...agents.packResults(results, "firefox") });
+    } catch (err) {
+      sendJson(res, 500, { error: String(err.message || err) });
+    }
+    return;
+  }
+
+  if (url === "/api/firefox/js" && req.method === "POST") {
+    try {
+      const body = await readJsonBody(req);
+      if (!body.script) {
+        sendJson(res, 400, { error: "script required" });
+        return;
+      }
+      const state = loadState(cfg);
+      const opts = targetOpts(body);
+      const results = await agents.firefoxAll(cfg, state, "/firefox/js", { script: body.script }, opts);
+      sendJson(res, 200, { ok: true, ...agents.packResults(results, "firefox") });
+    } catch (err) {
+      sendJson(res, 500, { error: String(err.message || err) });
+    }
+    return;
+  }
+
+  if (url === "/api/exec" && req.method === "POST") {
+    try {
+      const body = await readJsonBody(req);
+      if (!body.command) {
+        sendJson(res, 400, { error: "command required" });
+        return;
+      }
+      const state = loadState(cfg);
+      const opts = targetOpts(body);
+      const results = await agents.execAll(cfg, state, body.command, opts);
+      sendJson(res, 200, { ok: true, ...agents.packResults(results, "exec") });
+    } catch (err) {
+      sendJson(res, 500, { error: String(err.message || err) });
+    }
+    return;
+  }
+
   let file = url === "/" ? "/index.html" : url;
   if (file === "/gui" || file === "/fleet-gui.html") file = "/index.html";
   const fp = path.join(publicDir, file);

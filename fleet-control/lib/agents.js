@@ -51,17 +51,41 @@ function agentRequest(host, port, token, method, path, body) {
   });
 }
 
-async function mapLiveMachines(cfg, state, fn) {
+async function filterMachines(cfg, state, { ips, liveOnly = false } = {}) {
+  let machines = (state.machines || []).filter((m) => m.tailscale_ip);
+  if (ips && Array.isArray(ips) && ips.length) {
+    const set = new Set(ips.map(String));
+    machines = machines.filter((m) => set.has(m.tailscale_ip));
+  }
+  if (liveOnly) {
+    const port = cfg.agent_port || 8765;
+    const token = cfg.fleet_agent_token;
+    const checked = await Promise.all(
+      machines.map(async (m) => {
+        const r = await agentRequest(m.tailscale_ip, port, token, "GET", "/health");
+        return r.ok ? m : null;
+      })
+    );
+    machines = checked.filter(Boolean);
+  }
+  return machines;
+}
+
+async function mapMachines(cfg, state, opts, fn) {
   const port = cfg.agent_port || 8765;
   const token = cfg.fleet_agent_token;
-  const live = (state.machines || []).filter((m) => m.tailscale_ip);
+  const machines = await filterMachines(cfg, state, opts);
   return Promise.all(
-    live.map(async (m) => {
+    machines.map(async (m) => {
       const host = m.tailscale_ip;
       const result = await fn(host, port, token, m);
       return { ...m, ...result };
     })
   );
+}
+
+async function mapLiveMachines(cfg, state, fn, opts = {}) {
+  return mapMachines(cfg, state, { liveOnly: false, ...opts }, fn);
 }
 
 async function healthAll(cfg, state) {
@@ -78,24 +102,42 @@ async function metricsAll(cfg, state) {
   });
 }
 
-async function execAll(cfg, state, command) {
-  return mapLiveMachines(cfg, state, async (host, port, token) => {
+async function execAll(cfg, state, command, opts = {}) {
+  return mapMachines(cfg, state, opts, async (host, port, token) => {
     const r = await agentRequest(host, port, token, "POST", "/exec", { command });
     return { exec: r };
   });
 }
 
-async function firefoxAll(cfg, state, subpath, body) {
-  return mapLiveMachines(cfg, state, async (host, port, token) => {
-    const r = await agentRequest(host, port, token, "POST", subpath, body);
+async function firefoxAll(cfg, state, subpath, body, opts = {}) {
+  const method = opts.method || "POST";
+  return mapMachines(cfg, state, opts, async (host, port, token) => {
+    const r = await agentRequest(host, port, token, method, subpath, method === "POST" ? body : null);
     return { firefox: r };
   });
 }
 
+function packResults(results, key) {
+  return {
+    targeted: results.map((r) => r.tailscale_ip),
+    results: results.map((r) => {
+      const block = r[key] || {};
+      return {
+        ip: r.tailscale_ip,
+        ok: !!block.ok,
+        status: block.status,
+        body: block.body,
+      };
+    }),
+  };
+}
+
 module.exports = {
   agentRequest,
+  filterMachines,
   healthAll,
   metricsAll,
   execAll,
   firefoxAll,
+  packResults,
 };

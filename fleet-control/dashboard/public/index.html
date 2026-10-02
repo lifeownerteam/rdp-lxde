@@ -6,7 +6,16 @@
   <title>Fleet Control</title>
   <style>
     :root { font-family: system-ui, sans-serif; background: #0f1419; color: #e7ecf1; }
-    body { margin: 1.5rem; max-width: 960px; }
+    body { margin: 1.5rem; max-width: 1100px; }
+    input[type="text"], textarea {
+      background: #1a2332; color: #e7ecf1; border: 1px solid #3d4f66;
+      padding: 0.45rem 0.65rem; border-radius: 6px; font-size: 0.9rem;
+      font-family: inherit; width: 100%; box-sizing: border-box;
+    }
+    textarea { min-height: 5rem; font-family: ui-monospace, monospace; font-size: 0.85rem; }
+    .row { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin: 0.5rem 0; }
+    .row input[type="text"] { flex: 1; min-width: 12rem; }
+    .subtable { margin-top: 0.5rem; font-size: 0.85rem; }
     h1 { font-size: 1.25rem; font-weight: 600; margin-bottom: 0.5rem; }
     .toolbar { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 1rem 0; }
     button {
@@ -55,6 +64,47 @@
   <div class="panel">
     <h2>Πρόοδος</h2>
     <div id="log">—</div>
+  </div>
+
+  <div class="panel">
+    <h2>Firefox (όλες οι μηχανές)</h2>
+    <p class="meta">Στόχος (LIVE από πίνακα): <span id="fleetTargets">—</span></p>
+    <div class="row">
+      <input type="text" id="ffUrl" placeholder="https://…" value="https://example.com" />
+      <button type="button" id="btnFfOpen" class="primary">Άνοιγμα URL</button>
+      <button type="button" id="btnFfClose">Κλείσιμο tabs</button>
+      <button type="button" id="btnFfStatus">Κατάσταση Firefox</button>
+    </div>
+    <table class="subtable">
+      <thead><tr><th>IP</th><th>Αποτέλεσμα</th><th>Λεπτομέρειες</th></tr></thead>
+      <tbody id="ffStatusBody"><tr><td colspan="3" class="meta">—</td></tr></tbody>
+    </table>
+  </div>
+
+  <div class="panel">
+    <h2>JS Console</h2>
+    <p class="meta">Marionette — ίδιο script σε όλα τα Firefox των LIVE μηχανών.</p>
+    <textarea id="jsScript" placeholder="return document.title"></textarea>
+    <div class="row">
+      <button type="button" id="btnJsRun" class="primary">Εκτέλεση σε όλες</button>
+    </div>
+    <table class="subtable">
+      <thead><tr><th>IP</th><th>ok/error</th><th>output</th></tr></thead>
+      <tbody id="jsResults"><tr><td colspan="3" class="meta">—</td></tr></tbody>
+    </table>
+  </div>
+
+  <div class="panel">
+    <h2>Terminal</h2>
+    <p class="meta">Παράλληλο shell (`/exec`) σε όλες τις LIVE μηχανές.</p>
+    <div class="row">
+      <input type="text" id="execCmd" placeholder="uname -a" />
+      <button type="button" id="btnExecRun" class="primary">Εκτέλεση σε όλες</button>
+    </div>
+    <table class="subtable">
+      <thead><tr><th>IP</th><th>ok/error</th><th>stdout / λεπτομέρειες</th></tr></thead>
+      <tbody id="execResults"><tr><td colspan="3" class="meta">—</td></tr></tbody>
+    </table>
   </div>
 
   <p class="meta" id="updated">Μηχανές — φόρτωση…</p>
@@ -240,5 +290,6 @@
     setInterval(refreshSummary, 10000);
     setInterval(loadGhStatus, 30000);
   </script>
+  <script src="/fleet-control.js"></script>
 </body>
 </html>

@@ -110,6 +110,16 @@ npm run setup-account -- -Username ryansims046
 
 Placeholder repos (`OTHER_ORG`, `YOUR_*`) και `enabled: false` **δεν** χρησιμοποιούνται στην provision.
 
+### Panel: Firefox & JS
+
+Μετά το `npm run dashboard` / `npm run gui`, στο **`http://127.0.0.1:8780/`** (μόνο localhost):
+
+- **Firefox (όλες οι μηχανές)** — URL, άνοιγμα/κλείσιμο tabs, κατάσταση Marionette σε κάθε LIVE agent.
+- **JS Console** — ένα script → αποτελέσματα ανά IP (ίδιο με `node cli.js firefox js "…"`).
+- **Terminal** — παράλληλο shell ανά IP (ίδιο με `cli.js exec`).
+
+Ο server καλεί τους agents με το token από `config.json` — **όχι** στο frontend. Προεπιλογή στόχου: μόνο μηχανές **LIVE** από `/api/summary`· προαιρετικά `ips` στο JSON body των API routes.
+
 ## CLI reference
 
 | Command | Description |
