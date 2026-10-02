@@ -1,0 +1,10 @@
+{
+  "name": "fleet-control",
+  "private": true,
+  "version": "0.1.0",
+  "description": "CLI and dashboard for RDP LXDE GitHub Actions fleet",
+  "scripts": {
+    "status": "node cli.js status",
+    "dashboard": "node dashboard/server.js"
+  }
+}

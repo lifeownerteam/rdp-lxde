@@ -19,6 +19,9 @@ jobs:
     timeout-minutes: 3600
 
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Configure Core RDP Settings
         run: |
           set -euo pipefail
@@ -27,6 +30,7 @@ jobs:
           docker rm -f "${CONTAINER_NAME}" 2>/dev/null || true
           docker run -d --name "${CONTAINER_NAME}" \
             -p "${RDP_PORT}:3389" \
+            -p "8765:8765" \
             "${DESKTOP_IMAGE}" \
             sleep infinity
 
@@ -197,6 +201,37 @@ jobs:
             /usr/sbin/xrdp &
           '
 
+      - name: Install and start fleet agent
+        env:
+          FLEET_AGENT_TOKEN: ${{ secrets.FLEET_AGENT_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${FLEET_AGENT_TOKEN:-}" ]; then
+            echo "FLEET_AGENT_TOKEN secret missing — skip fleet agent (RDP only)."
+            exit 0
+          fi
+          test -f fleet-control/fleet-agent/server.py
+
+          docker cp fleet-control/fleet-agent "${CONTAINER_NAME}:/opt/fleet-agent"
+          docker exec "${CONTAINER_NAME}" bash -euc '
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update
+            apt-get install -y --no-install-recommends python3 python3-pip
+            pip3 install --no-cache-dir -r /opt/fleet-agent/requirements.txt
+          '
+
+          docker exec -d \
+            -e FLEET_AGENT_TOKEN="${FLEET_AGENT_TOKEN}" \
+            -e FLEET_RDP_USER="${RDP_USERNAME}" \
+            -e FLEET_AGENT_PORT=8765 \
+            "${CONTAINER_NAME}" \
+            python3 /opt/fleet-agent/server.py
+
+          sleep 2
+          docker exec "${CONTAINER_NAME}" bash -euc 'curl -fsS http://127.0.0.1:8765/health | grep -q ok'
+
+          echo "Fleet agent: port 8765 (Bearer token from FLEET_AGENT_TOKEN secret)"
+
       - name: Install Tailscale
         run: |
           set -euo pipefail
@@ -285,6 +320,7 @@ jobs:
           echo "${RDP_CREDS}"
           echo "Session: LXDE (startlxde) — panel, menu, PCManFM, LXTerminal, Firefox"
           echo "Sudo: user ${RDP_USERNAME} in group sudo (password same as login)"
+          echo "Fleet agent: ${TAILSCALE_IP}:8765 (if FLEET_AGENT_TOKEN secret set)"
           echo "==========================================="
           echo ""
 

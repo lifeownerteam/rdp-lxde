@@ -1,0 +1,41 @@
+{
+  "agent_port": 8765,
+  "machines_per_account": 8,
+  "workflow_id": "rdp-alpine-openbox.yml",
+  "workflow_name": "RDP Linux Desktop (LXDE)",
+  "poll_interval_seconds": 30,
+  "github_accounts": [
+    {
+      "name": "primary",
+      "token_env": "GH_TOKEN_PRIMARY",
+      "gh_host": "github.com",
+      "repos": ["YOUR_ORG/rdp-lxde"],
+      "machines_per_account": 8,
+      "secrets_note": "Repo needs TAILSCALE_AUTH_KEY and FLEET_AGENT_TOKEN (same value as fleet_agent_token below)"
+    },
+    {
+      "name": "secondary",
+      "token_env": "GH_TOKEN_SECONDARY",
+      "gh_host": "github.com",
+      "repos": ["OTHER_ORG/rdp-lxde"],
+      "machines_per_account": 8
+    }
+  ],
+  "tailscale": {
+    "api_keys": [
+      {
+        "name": "main-tailnet",
+        "key_env": "TS_API_KEY_MAIN",
+        "tailnet": "-"
+      }
+    ],
+    "note": "Optional: use Tailscale API to list devices and correlate hostnames gh-runner-*"
+  },
+  "fleet_agent_token_env": "FLEET_AGENT_TOKEN",
+  "fleet_agent_token": "change-me-use-long-random-string",
+  "state_file": "fleet-state.json",
+  "dashboard": {
+    "bind": "127.0.0.1",
+    "port": 8780
+  }
+}

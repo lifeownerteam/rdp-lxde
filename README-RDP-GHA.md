@@ -14,3 +14,9 @@ Private workflows for ephemeral RDP runners reachable over Tailscale.
 3. Download the `tailscale-ip` artifact (Linux) or read job logs for the Tailscale IP; connect RDP to `IP:3389`.
 
 Helper (manual key paste): `scripts/set-tailscale-github-secret.ps1 -Repo OWNER/REPO`
+
+## Fleet control (optional)
+
+Multi-machine orchestration (provision many LXDE runs, parallel exec, Firefox, dashboard): see **`fleet-control/README.md`**.
+
+Additional repo secret for agents: **`FLEET_AGENT_TOKEN`** (same value as in local `fleet-control/config.json`). If unset, the workflow still provides RDP only.

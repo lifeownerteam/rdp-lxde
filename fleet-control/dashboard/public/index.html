@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Fleet Control</title>
+  <style>
+    :root { font-family: system-ui, sans-serif; background: #0f1419; color: #e7ecf1; }
+    body { margin: 1.5rem; }
+    h1 { font-size: 1.25rem; font-weight: 600; }
+    table { border-collapse: collapse; width: 100%; margin-top: 1rem; }
+    th, td { text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid #2a3441; }
+    .live { color: #3dd68c; }
+    .down { color: #f07178; }
+    .meta { color: #8b9cb3; font-size: 0.85rem; }
+  </style>
+</head>
+<body>
+  <h1>Fleet machines</h1>
+  <p class="meta" id="updated">Loading…</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Status</th>
+        <th>Tailscale IP</th>
+        <th>Account</th>
+        <th>CPU %</th>
+        <th>RAM</th>
+      </tr>
+    </thead>
+    <tbody id="rows"></tbody>
+  </table>
+  <script>
+    async function refresh() {
+      const res = await fetch("/api/summary");
+      const data = await res.json();
+      document.getElementById("updated").textContent =
+        "Updated " + (data.updated_at || "") + " — auto-refresh 10s";
+      const tbody = document.getElementById("rows");
+      tbody.innerHTML = "";
+      for (const m of data.machines || []) {
+        const tr = document.createElement("tr");
+        const mem = m.metrics && m.metrics.memory;
+        tr.innerHTML =
+          `<td class="${m.live ? "live" : "down"}">${m.live ? "LIVE" : "DOWN"}</td>` +
+          `<td>${m.ip || ""}</td>` +
+          `<td>${m.account || ""}</td>` +
+          `<td>${m.metrics && m.metrics.cpu_percent != null ? m.metrics.cpu_percent : "—"}</td>` +
+          `<td>${mem ? mem.used_mb + " / " + mem.total_mb + " MB" : "—"}</td>`;
+        tbody.appendChild(tr);
+      }
+    }
+    refresh();
+    setInterval(refresh, 10000);
+  </script>
+</body>
+</html>

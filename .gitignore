@@ -7,10 +7,15 @@
 !.github/workflows/*.yml
 !scripts/
 !scripts/set-tailscale-github-secret.ps1
+!scripts/set-fleet-agent-github-secret.ps1
 !scripts/.gitignore
+!fleet-control/
+!fleet-control/**
 
 # Secrets and local env
 .env
 .env.*
 *.local
 **/ngrok-token.local
+fleet-control/config.json
+fleet-control/fleet-state.json
