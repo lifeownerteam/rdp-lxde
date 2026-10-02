@@ -31,7 +31,16 @@ function ghRequest(token, method, urlPath, body, host = "api.github.com") {
             json = { raw: text };
           }
           if (res.statusCode >= 400) {
-            reject(new Error(`GitHub ${res.statusCode}: ${text.slice(0, 500)}`));
+            const snippet = text.slice(0, 500);
+            if (res.statusCode === 404) {
+              reject(
+                new Error(
+                  `GitHub 404: repository or workflow not found — ${urlPath} — ${snippet}`
+                )
+              );
+              return;
+            }
+            reject(new Error(`GitHub ${res.statusCode}: ${snippet}`));
             return;
           }
           resolve({ status: res.statusCode, json, headers: res.headers });

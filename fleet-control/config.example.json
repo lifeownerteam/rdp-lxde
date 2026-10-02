@@ -15,10 +15,12 @@
     },
     {
       "name": "secondary",
+      "enabled": false,
       "token_env": "GH_TOKEN_SECONDARY",
       "gh_host": "github.com",
       "repos": ["OTHER_ORG/rdp-lxde"],
-      "machines_per_account": 8
+      "machines_per_account": 8,
+      "manual_account_hint": "Enable only with real repos. Example GitHub login: ryansims046 — use that user's org/repo, not OTHER_ORG placeholders."
     }
   ],
   "tailscale": {

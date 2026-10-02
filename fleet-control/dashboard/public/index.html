@@ -16,6 +16,10 @@
     button:hover:not(:disabled) { background: #243044; }
     button:disabled { opacity: 0.5; cursor: not-allowed; }
     button.primary { border-color: #3dd68c; color: #3dd68c; }
+    select {
+      background: #1a2332; color: #e7ecf1; border: 1px solid #3d4f66;
+      padding: 0.5rem 0.65rem; border-radius: 6px; font-size: 0.9rem;
+    }
     table { border-collapse: collapse; width: 100%; margin-top: 1rem; }
     th, td { text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid #2a3441; }
     .live { color: #3dd68c; }
@@ -36,6 +40,8 @@
   <p class="meta">Τοπικό dashboard — χωρίς αποθήκευση κωδικών στο UI</p>
 
   <div class="toolbar">
+    <label class="meta" for="accountSelect">Λογαριασμός</label>
+    <select id="accountSelect" aria-label="GitHub account"></select>
     <button type="button" id="btnGh">Σύνδεση GitHub</button>
     <button type="button" id="btnProvision" class="primary">Έναρξη 8 μηχανών</button>
     <button type="button" id="btnRefresh">Ανανέωση</button>
@@ -113,7 +119,12 @@
         const res = await fetch(statusUrl);
         const job = await res.json();
         appendLogs(logEl, job.logs, false);
-        if (job.error) logEl.textContent += "\nΣφάλμα: " + job.error;
+        if (job.error) {
+          logEl.textContent += "\nΣφάλμα: " + job.error;
+          if (/404|not found/i.test(job.error)) {
+            logEl.textContent += "\n(Έλεγξε repos στο config.json και ότι το workflow υπάρχει στο repo.)";
+          }
+        }
         if (job.running) {
           setTimeout(tick, 800);
         } else {
@@ -139,13 +150,46 @@
       }
     });
 
+    function selectedAccountName() {
+      const sel = document.getElementById("accountSelect");
+      return sel && sel.value ? sel.value : "primary";
+    }
+
+    async function loadAccounts() {
+      const sel = document.getElementById("accountSelect");
+      try {
+        const res = await fetch("/api/accounts");
+        const data = await res.json();
+        sel.innerHTML = "";
+        const list = data.accounts || [];
+        const usable = list.filter((a) => a.provisionable);
+        const options = usable.length ? usable : list;
+        for (const a of options) {
+          const opt = document.createElement("option");
+          opt.value = a.name;
+          let label = a.name;
+          if (!a.provisionable && a.reason) label += " (" + a.reason + ")";
+          opt.textContent = label;
+          opt.disabled = !a.provisionable;
+          sel.appendChild(opt);
+        }
+        if (usable.length) {
+          const primary = usable.find((a) => a.name === "primary");
+          sel.value = (primary || usable[0]).name;
+        }
+      } catch (e) {
+        sel.innerHTML = '<option value="primary">primary</option>';
+      }
+    }
+
     document.getElementById("btnProvision").addEventListener("click", async () => {
       const btn = document.getElementById("btnProvision");
       const logEl = document.getElementById("log");
+      const account = selectedAccountName();
       const res = await fetch("/api/provision", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ count: 8 }),
+        body: JSON.stringify({ count: 8, account }),
       });
       if (res.status === 409) {
         logEl.textContent = "Η provision τρέχει ήδη.";
@@ -157,7 +201,12 @@
     document.getElementById("btnRefresh").addEventListener("click", async () => {
       const btn = document.getElementById("btnRefresh");
       const logEl = document.getElementById("log");
-      const res = await fetch("/api/refresh", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+      const account = selectedAccountName();
+      const res = await fetch("/api/refresh", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ account }),
+      });
       if (res.status === 409) {
         logEl.textContent = "Η ανανέωση τρέχει ήδη.";
         return;
@@ -185,6 +234,7 @@
       }
     }
 
+    loadAccounts();
     loadGhStatus();
     refreshSummary();
     setInterval(refreshSummary, 10000);

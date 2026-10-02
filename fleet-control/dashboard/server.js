@@ -6,7 +6,7 @@ const path = require("path");
 const { loadConfig } = require("../lib/config");
 const { loadState } = require("../lib/state");
 const agents = require("../lib/agents");
-const { cmdProvision, cmdRefresh } = require("../lib/commands");
+const { cmdProvision, cmdRefresh, listAccountOptions } = require("../lib/commands");
 const { spawnGhAuthLogin, getGitHubAuthStatus } = require("../lib/gh-local");
 const jobs = require("../lib/jobs");
 
@@ -67,6 +67,15 @@ const server = http.createServer(async (req, res) => {
   if (url === "/api/summary" && req.method === "GET") {
     try {
       sendJson(res, 200, await apiSummary());
+    } catch (err) {
+      sendJson(res, 500, { error: String(err.message || err) });
+    }
+    return;
+  }
+
+  if (url === "/api/accounts" && req.method === "GET") {
+    try {
+      sendJson(res, 200, { accounts: listAccountOptions(cfg) });
     } catch (err) {
       sendJson(res, 500, { error: String(err.message || err) });
     }
