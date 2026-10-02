@@ -1,4 +1,4 @@
-# Back-compat shim — prefer repo root: ..\scripts\fleet.ps1
+# Back-compat shim - prefer repo root: ..\scripts\fleet.ps1
 param(
   [Parameter(ValueFromRemainingArguments = $true)]
   [string[]]$Args
@@ -15,7 +15,7 @@ if ($Args.Count -gt 0 -and $Args[0] -eq "setup-account") {
 }
 
 if (-not (Test-Path -LiteralPath $Wrapper)) {
-  Write-Error "Missing $Wrapper — run from repo with scripts/fleet.ps1"
+  Write-Error "Missing $Wrapper - run from repo with scripts/fleet.ps1"
   exit 1
 }
 
