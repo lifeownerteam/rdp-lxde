@@ -3,14 +3,24 @@
 
 const { loadConfig } = require("./lib/config");
 const { loadState } = require("./lib/state");
-const { cmdProvision, cmdRefresh } = require("./lib/commands");
+const {
+  cmdProvision,
+  cmdProvisionFleet,
+  cmdRefresh,
+  cmdCleanQueue,
+  cmdPoll,
+} = require("./lib/commands");
+const { buildFleetStatus, printHumanTable } = require("./lib/fleet-status");
 const agents = require("./lib/agents");
 
 function usage() {
   console.log(`Fleet control CLI
 
 Usage:
-  node cli.js provision [--account NAME] [--repo OWNER/REPO] [--count N]
+  node cli.js provision [--account NAME] [--count N|8|80] [--fleet]
+  node cli.js provision-fleet [--account NAME] [--total N] [--cancel-duplicates]
+  node cli.js clean-queue [--account NAME]
+  node cli.js poll [--minutes N] [--target N] [--account NAME]
   node cli.js refresh [--account NAME]
   node cli.js status [--json]
   node cli.js exec "<shell command>"
@@ -52,6 +62,12 @@ async function runProvisionCli(cfg, flags) {
   });
 }
 
+async function runProvisionFleetCli(cfg, flags) {
+  await cmdProvisionFleet(cfg, flags, (ev) => {
+    if (ev.type === "log") console.log(ev.message);
+  });
+}
+
 async function runRefreshCli(cfg, flags) {
   await cmdRefresh(cfg, flags, (ev) => {
     if (ev.type === "log") console.log(ev.message);
@@ -59,39 +75,12 @@ async function runRefreshCli(cfg, flags) {
 }
 
 async function cmdStatus(cfg, flags) {
-  const state = loadState(cfg);
-  const rows = await agents.healthAll(cfg, state);
-  const enriched = [];
-  for (const row of rows) {
-    let metrics = null;
-    if (row.health && row.health.ok) {
-      metrics = await agents.agentRequest(
-        row.tailscale_ip,
-        cfg.agent_port || 8765,
-        cfg.fleet_agent_token,
-        "GET",
-        "/metrics"
-      );
-    }
-    enriched.push({
-      ip: row.tailscale_ip,
-      account: row.account,
-      repo: row.repo,
-      run_id: row.run_id,
-      live: !!(row.health && row.health.ok),
-      health: row.health && row.health.body,
-      metrics: metrics && metrics.body,
-    });
-  }
+  const report = await buildFleetStatus(cfg);
   if (flags.json) {
-    console.log(JSON.stringify(enriched, null, 2));
+    console.log(JSON.stringify(report, null, 2));
     return;
   }
-  for (const r of enriched) {
-    const m = r.metrics && r.metrics.memory ? r.metrics : null;
-    const mem = m ? ` RAM ${m.memory.used_mb}/${m.memory.total_mb}MB CPU ${m.cpu_percent}%` : "";
-    console.log(`${r.live ? "LIVE" : "DOWN"} ${r.tailscale_ip || "?"} ${r.account || ""}${mem}`);
-  }
+  printHumanTable(report);
 }
 
 async function cmdExec(cfg, command) {
@@ -163,6 +152,7 @@ async function main() {
   const cfg = loadConfig();
   try {
     if (cmd === "provision") await runProvisionCli(cfg, flags);
+    else if (cmd === "provision-fleet") await runProvisionFleetCli(cfg, flags);
     else if (cmd === "refresh") await runRefreshCli(cfg, flags);
     else if (cmd === "status") await cmdStatus(cfg, flags);
     else if (cmd === "exec") await cmdExec(cfg, positional.slice(1).join(" ") || flags._);

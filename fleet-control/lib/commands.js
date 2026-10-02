@@ -26,6 +26,25 @@ function applyGhToken(acct, ghToken) {
 }
 
 /**
+ * All enabled accounts with real repos and token (multi-account fleet).
+ */
+function fleetTargetAccounts(cfg, flags = {}) {
+  const ghToken = getGhTokenSync();
+  let list = (cfg.github_accounts || []).filter((a) => a.enabled !== false);
+
+  if (flags.account) {
+    list = list.filter((a) => a.name === flags.account);
+  }
+
+  return list
+    .map((a) => {
+      const withToken = applyGhToken(a, ghToken);
+      return { ...withToken, repos: filterRepos(withToken.repos) };
+    })
+    .filter((a) => a.token && a.repos.length > 0);
+}
+
+/**
  * Accounts used for provision/refresh: enabled only, real repos, has token.
  * Default (no flags.account): primary only — never all accounts.
  */
@@ -109,7 +128,20 @@ async function dispatchWithRepoError(acct, repo, workflowId) {
   }
 }
 
+function parseProvisionTarget(cfg, flags) {
+  const raw = flags.total || flags.count || flags.target;
+  if (raw !== undefined && raw !== true) {
+    return parseInt(String(raw), 10);
+  }
+  return parseInt(cfg.machines_per_account || 8, 10);
+}
+
 async function cmdProvision(cfg, flags, onEvent) {
+  const target = parseProvisionTarget(cfg, flags);
+  if (target >= 80 || flags.fleet || flags["multi-account"]) {
+    return cmdProvisionFleet(cfg, { ...flags, total: target }, onEvent);
+  }
+
   const emit = (msg) => {
     if (onEvent) onEvent({ type: "log", message: msg });
   };
@@ -123,30 +155,166 @@ async function cmdProvision(cfg, flags, onEvent) {
       "No provisionable GitHub account (primary needs real repos, enabled:true, and gh auth or token_env)"
     );
   }
+
+  let dispatched = 0;
   for (const acct of accts) {
     for (const repo of acct.repos) {
-      const count = parseInt(
-        flags.count || acct.machines_per_account || cfg.machines_per_account || 8,
+      const perRepoTarget = parseInt(
+        flags.count || acct.machines_per_account || cfg.machines_per_account || target,
         10
       );
-      emit(`Provisioning ${count} runs on ${repo} (${acct.name})...`);
-      for (let i = 0; i < count; i++) {
+      const runs = await gh.listWorkflowRuns(acct.token, repo, cfg.workflow_id, 100);
+      const activeCount = gh.countActiveRuns(runs);
+      const toDispatch = Math.max(0, perRepoTarget - activeCount);
+      emit(
+        `${repo} (${acct.name}): ${activeCount}/${perRepoTarget} active → dispatch ${toDispatch}`
+      );
+      if (toDispatch <= 0) continue;
+
+      for (let i = 0; i < toDispatch; i++) {
         await dispatchWithRepoError(acct, repo, cfg.workflow_id);
         state.runs.push({
           account: acct.name,
           repo,
           dispatched_at: new Date().toISOString(),
+          mode: "provision-dedupe",
         });
-        emit(`Dispatched ${i + 1}/${count} — ${repo}`);
+        dispatched += 1;
+        emit(`  dispatched ${i + 1}/${toDispatch} — ${repo}`);
         if (onEvent) {
-          onEvent({ type: "progress", current: i + 1, total: count, repo, account: acct.name });
+          onEvent({
+            type: "progress",
+            current: dispatched,
+            total: toDispatch,
+            repo,
+            account: acct.name,
+          });
         }
-        await new Promise((r) => setTimeout(r, 1500));
+        await new Promise((r) => setTimeout(r, 800));
       }
     }
   }
   saveState(cfg, state);
-  emit("Done. Use Ανανέωση to pull Tailscale IPs.");
+  if (dispatched === 0) {
+    emit("Nothing to dispatch (already at target active runs).");
+  } else {
+    emit(`Done: ${dispatched} new run(s). Use poll or refresh for Tailscale IPs.`);
+  }
+}
+
+function perAccountTarget(cfg, acct) {
+  return parseInt(acct.machines_per_account || cfg.machines_per_account || 8, 10);
+}
+
+function maxConcurrentPerAccount(cfg) {
+  return parseInt(cfg.max_concurrent_dispatch_per_account || cfg.machines_per_account || 8, 10);
+}
+
+/**
+ * Count queued/in_progress workflow runs per repo; optionally cancel excess queued.
+ */
+async function reconcileAccountRuns(cfg, acct, repo, flags, emit) {
+  const runs = await gh.listWorkflowRuns(acct.token, repo, cfg.workflow_id, 100);
+  const active = gh.activeRuns(runs);
+  const cap = Math.min(perAccountTarget(cfg, acct), maxConcurrentPerAccount(cfg));
+  const queued = active.filter((r) => r.status === "queued");
+
+  if (flags["cancel-duplicates"] && queued.length > 0) {
+    const inProgress = active.length - queued.length;
+    const maxQueued = Math.max(0, cap - inProgress);
+    if (queued.length > maxQueued) {
+      const sorted = [...queued].sort(
+        (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+      );
+      const toCancel = sorted.slice(maxQueued);
+      for (const run of toCancel) {
+        emit(`Cancel extra queued run ${run.id} on ${repo} (${acct.name})`);
+        await gh.cancelWorkflowRun(acct.token, repo, run.id);
+        await new Promise((r) => setTimeout(r, 400));
+      }
+    }
+  }
+
+  const runsAfter =
+    flags["cancel-duplicates"] && queued.length > 0
+      ? await gh.listWorkflowRuns(acct.token, repo, cfg.workflow_id, 100)
+      : runs;
+  const activeAfter = gh.activeRuns(runsAfter);
+  return { activeCount: activeAfter.length, cap };
+}
+
+async function cmdProvisionFleet(cfg, flags, onEvent) {
+  const emit = (msg) => {
+    if (onEvent) onEvent({ type: "log", message: msg });
+  };
+  const state = loadState(cfg);
+  const accts = fleetTargetAccounts(cfg, flags);
+  if (!accts.length) {
+    if (flags.account) {
+      throw new Error(explainMissingAccount(cfg, flags.account));
+    }
+    throw new Error(
+      "No provisionable GitHub accounts for fleet (enabled, real repos, gh auth or token_env)"
+    );
+  }
+
+  const targetTotal = parseInt(flags.total || cfg.target_total || 80, 10);
+  const plan = [];
+
+  for (const acct of accts) {
+    for (const repo of acct.repos) {
+      const { activeCount, cap } = await reconcileAccountRuns(cfg, acct, repo, flags, emit);
+      const accountWant = cap;
+      let toDispatch = Math.max(0, accountWant - activeCount);
+      plan.push({ acct, repo, activeCount, cap, toDispatch });
+    }
+  }
+
+  let totalActive = plan.reduce((s, p) => s + p.activeCount, 0);
+  let dispatchBudget = Math.max(0, targetTotal - totalActive);
+  emit(
+    `Fleet plan: ${accts.length} account(s), ${totalActive} active run(s), target ${targetTotal}, budget ${dispatchBudget} dispatch(es)`
+  );
+
+  if (dispatchBudget === 0) {
+    emit("Nothing to dispatch (at or above target given active runs).");
+    return;
+  }
+
+  let dispatched = 0;
+  for (const row of plan) {
+    if (dispatchBudget <= 0) break;
+    const n = Math.min(row.toDispatch, dispatchBudget);
+    if (n <= 0) {
+      emit(`${row.repo} (${row.acct.name}): ${row.activeCount}/${row.cap} active — skip`);
+      continue;
+    }
+    emit(`Dispatching ${n} on ${row.repo} (${row.acct.name}), ${row.activeCount}/${row.cap} already active…`);
+    for (let i = 0; i < n; i++) {
+      await dispatchWithRepoError(row.acct, row.repo, cfg.workflow_id);
+      state.runs.push({
+        account: row.acct.name,
+        repo: row.repo,
+        dispatched_at: new Date().toISOString(),
+        mode: "provision-fleet",
+      });
+      dispatched += 1;
+      dispatchBudget -= 1;
+      emit(`  dispatched ${i + 1}/${n} — ${row.repo}`);
+      if (onEvent) {
+        onEvent({
+          type: "progress",
+          current: dispatched,
+          total: targetTotal - totalActive,
+          repo: row.repo,
+          account: row.acct.name,
+        });
+      }
+      await new Promise((r) => setTimeout(r, 800));
+    }
+  }
+  saveState(cfg, state);
+  emit(`Fleet dispatch complete: ${dispatched} new run(s). IPs will appear over ~10–20 min.`);
 }
 
 async function cmdRefresh(cfg, flags, onEvent) {
@@ -185,11 +353,72 @@ async function cmdRefresh(cfg, flags, onEvent) {
   emit("Refresh complete.");
 }
 
+async function cmdCleanQueue(cfg, flags, onEvent) {
+  const emit = (msg) => {
+    if (onEvent) onEvent({ type: "log", message: msg });
+  };
+  const accts = fleetTargetAccounts(cfg, flags);
+  if (!accts.length) {
+    throw new Error("No enabled GitHub accounts with token and real repos in config.json");
+  }
+
+  let cancelled = 0;
+  for (const acct of accts) {
+    for (const repo of acct.repos) {
+      const runs = await gh.listWorkflowRuns(acct.token, repo, cfg.workflow_id, 100);
+      const active = gh.activeRuns(runs);
+      emit(`${repo} (${acct.name}): cancelling ${active.length} queued/in_progress run(s)`);
+      for (const run of active) {
+        emit(`  cancel run ${run.id} (${run.status})`);
+        await gh.cancelWorkflowRun(acct.token, repo, run.id);
+        cancelled += 1;
+        await new Promise((r) => setTimeout(r, 350));
+      }
+    }
+  }
+  emit(`Clean queue complete: ${cancelled} run(s) cancelled.`);
+}
+
+async function cmdPoll(cfg, flags, onEvent) {
+  const emit = (msg) => {
+    if (onEvent) onEvent({ type: "log", message: msg });
+  };
+  const minutes = parseInt(flags.minutes || cfg.poll_minutes || 20, 10);
+  const targetIps = parseInt(
+    flags.target || flags.count || cfg.target_total || cfg.machines_per_account || 8,
+    10
+  );
+  const intervalSec = parseInt(flags.interval || cfg.poll_interval_seconds || 30, 10);
+  const deadline = Date.now() + minutes * 60 * 1000;
+
+  emit(`Poll: refresh every ${intervalSec}s for up to ${minutes} min (target ${targetIps} IP(s))`);
+  while (Date.now() < deadline) {
+    await cmdRefresh(cfg, flags, emit);
+    const state = loadState(cfg);
+    const ips = new Set(
+      (state.machines || []).map((m) => m.tailscale_ip).filter(Boolean)
+    );
+    emit(`  have ${ips.size}/${targetIps} unique IP(s)`);
+    if (ips.size >= targetIps) {
+      emit("Poll complete: target IP count reached.");
+      return;
+    }
+    const remaining = Math.max(0, deadline - Date.now());
+    if (remaining <= 0) break;
+    await new Promise((r) => setTimeout(r, Math.min(intervalSec * 1000, remaining)));
+  }
+  emit("Poll finished (time limit). Run status for details.");
+}
+
 module.exports = {
   isPlaceholderRepo,
+  fleetTargetAccounts,
   targetAccounts,
   listAccountOptions,
   accountsFor,
   cmdProvision,
+  cmdProvisionFleet,
   cmdRefresh,
+  cmdCleanQueue,
+  cmdPoll,
 };

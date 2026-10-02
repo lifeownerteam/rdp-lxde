@@ -1,9 +1,15 @@
-# Create Tailscale auth key via API, set GitHub secret, dispatch 8× LXDE on lifeownerteam/rdp-lxde.
+# Tailscale secret (once), queue-aware dispatch, optional poll for tailscale-ip artifacts.
 # API key (never printed): fleet-control/.tailscale-api-key OR $env:TAILSCALE_API_KEY OR $env:TS_API_KEY_MAIN
-# Usage: .\scripts\auto-fleet-lifeownerteam.ps1 [-Poll] [-PollMinutes 15]
+#
+# Usage:
+#   .\scripts\auto-fleet-lifeownerteam.ps1              # ensure secret, dispatch missing to 8
+#   .\scripts\auto-fleet-lifeownerteam.ps1 -PollOnly    # only poll artifacts (no secret, no dispatch)
+#   .\scripts\auto-fleet-lifeownerteam.ps1 -Poll -PollMinutes 20
 param(
+  [switch]$PollOnly,
   [switch]$Poll,
   [int]$PollMinutes = 15,
+  [int]$TargetCount = 8,
   [string]$Gh = "D:\Tools\gh\bin\gh.exe",
   [string]$Repo = "lifeownerteam/rdp-lxde",
   [string]$Workflow = "rdp-alpine-openbox.yml",
@@ -48,6 +54,13 @@ function Set-GhRepoSecretFromValue {
   }
 }
 
+function Test-GhRepoSecret {
+  param([string]$TargetRepo, [string]$SecretName)
+  $names = & $Gh secret list --repo $TargetRepo --json name 2>$null | ConvertFrom-Json
+  if (-not $names) { return $false }
+  return [bool](@($names) | Where-Object { $_.name -eq $SecretName })
+}
+
 function New-TailscaleAuthKey {
   param([string]$ApiKey)
   $pair = "${ApiKey}:"
@@ -77,37 +90,61 @@ function New-TailscaleAuthKey {
   return [string]$authKey
 }
 
-$apiKey = Get-TsApiKey
-if (-not $apiKey) {
-  Write-Error @"
-No Tailscale API key. Save tskey-api-… once to:
-  $KeyFile
-(or set `$env:TAILSCALE_API_KEY / `$env:TS_API_KEY_MAIN in this shell).
-"@
-  exit 2
+function Get-ActiveWorkflowCount {
+  param([string]$TargetRepo, [string]$WorkflowFile, [int]$Limit = 30)
+  $recent = & $Gh run list --repo $TargetRepo --workflow $WorkflowFile --limit $Limit `
+    --json databaseId, status | ConvertFrom-Json
+  if (-not $recent) { return 0 }
+  $active = @($recent | Where-Object { $_.status -in @("queued", "in_progress", "waiting", "pending") })
+  return $active.Count
 }
-
-Write-Host "Tailscale API key: loaded (not shown)"
-Write-Host "Creating reusable preauthorized auth key…"
-$authKey = New-TailscaleAuthKey -ApiKey $apiKey
-Write-Host "Auth key: created (not shown)"
 
 & $Gh auth switch -u $GhUser | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "gh auth switch -u $GhUser failed" }
 
-Set-GhRepoSecretFromValue -Name "TAILSCALE_AUTH_KEY" -Value $authKey -TargetRepo $Repo
-Write-Host "OK: TAILSCALE_AUTH_KEY set on $Repo"
+if ($PollOnly) {
+  $Poll = $true
+  Write-Host "PollOnly: skipping Tailscale secret and workflow dispatch."
+} else {
+  $hasSecret = Test-GhRepoSecret -TargetRepo $Repo -SecretName "TAILSCALE_AUTH_KEY"
+  if ($hasSecret) {
+    Write-Host "TAILSCALE_AUTH_KEY already on $Repo — not creating a new auth key."
+  } else {
+    $apiKey = Get-TsApiKey
+    if (-not $apiKey) {
+      Write-Error @"
+No Tailscale API key. Save tskey-api-… once to:
+  $KeyFile
+(or set `$env:TAILSCALE_API_KEY / `$env:TS_API_KEY_MAIN in this shell).
+"@
+      exit 2
+    }
+    Write-Host "Tailscale API key: loaded (not shown)"
+    Write-Host "Creating reusable preauthorized auth key…"
+    $authKey = New-TailscaleAuthKey -ApiKey $apiKey
+    Write-Host "Auth key: created (not shown)"
+    Set-GhRepoSecretFromValue -Name "TAILSCALE_AUTH_KEY" -Value $authKey -TargetRepo $Repo
+    Write-Host "OK: TAILSCALE_AUTH_KEY set on $Repo"
+  }
 
-Write-Host "Dispatching 8× $Workflow…"
-1..8 | ForEach-Object {
-  & $Gh workflow run $Workflow --repo $Repo --ref main 2>&1 | Out-Null
-  if ($LASTEXITCODE -ne 0) { throw "workflow dispatch $_/8 failed" }
-  Write-Host "  dispatched $_/8"
-  Start-Sleep -Milliseconds 800
+  $active = Get-ActiveWorkflowCount -TargetRepo $Repo -WorkflowFile $Workflow
+  $toDispatch = [Math]::Max(0, $TargetCount - $active)
+  Write-Host "Queue check: $active active, target $TargetCount → dispatch $toDispatch"
+  if ($toDispatch -gt 0) {
+    Write-Host "Dispatching $toDispatch× $Workflow…"
+    1..$toDispatch | ForEach-Object {
+      & $Gh workflow run $Workflow --repo $Repo --ref main 2>&1 | Out-Null
+      if ($LASTEXITCODE -ne 0) { throw "workflow dispatch $_/$toDispatch failed" }
+      Write-Host "  dispatched $_/$toDispatch"
+      Start-Sleep -Milliseconds 800
+    }
+  } else {
+    Write-Host "No dispatch needed (already at target active runs)."
+  }
 }
 
 if (-not $Poll) {
-  Write-Host "Done (no poll). Re-run with -Poll to wait for tailscale-ip artifacts."
+  Write-Host "Done (no poll). Re-run with -Poll or -PollOnly to wait for tailscale-ip artifacts."
   exit 0
 }
 
@@ -148,10 +185,10 @@ while ((Get-Date) -lt $deadline) {
       Remove-Item -LiteralPath $zipPath -Force -ErrorAction SilentlyContinue
     }
   }
-  if ($found.Count -ge 8) { break }
-  Write-Host "  have $($found.Count)/8 IPs, waiting…"
+  if ($found.Count -ge $TargetCount) { break }
+  Write-Host "  have $($found.Count)/$TargetCount IPs, waiting…"
   Start-Sleep -Seconds 30
 }
 
-Write-Host "Poll complete: $($found.Count)/8 with tailscale-ip"
+Write-Host "Poll complete: $($found.Count)/$TargetCount with tailscale-ip"
 $found.Values | Sort-Object -Unique | ForEach-Object { Write-Host "RDP $_:3389" }

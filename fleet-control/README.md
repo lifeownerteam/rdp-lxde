@@ -23,7 +23,7 @@ Orchestrate many **RDP Linux Desktop (LXDE)** GitHub Actions runners over Tailsc
 ## Quick start
 
 1. Copy `config.example.json` → `config.json` (never commit).
-2. **Tailscale API (μία φορά):** αποθήκευσε το `tskey-api-…` σε `fleet-control/.tailscale-api-key` (μία γραμμή, gitignored) — μετά `..\scripts\auto-fleet-lifeownerteam.ps1 -Poll`.
+2. **Tailscale API (μία φορά):** αποθήκευσε το `tskey-api-…` σε `fleet-control/.tailscale-api-key` (μία γραμμή, gitignored) — μετά `..\scripts\auto-fleet-lifeownerteam.ps1` (queue-aware dispatch) ή `-PollOnly -Poll` μόνο για IPs.
 3. On each target repo, set secrets (same as RDP today):
    - `TAILSCALE_AUTH_KEY`
    - `FLEET_AGENT_TOKEN` — same long random string as in your local `config.json` / env
@@ -94,7 +94,8 @@ Placeholder repos (`OTHER_ORG`, `YOUR_*`) και `enabled: false` **δεν** χ�
 
 | Command | Description |
 |---------|-------------|
-| `provision [--account NAME] [--count N]` | Dispatch workflows per repo |
+| `provision [--account NAME] [--count N]` | Dispatch workflows per repo (default: primary account only) |
+| `provision-fleet [--account NAME] [--total N] [--cancel-duplicates]` | All enabled accounts; dispatch only missing runs toward `target_total`; dedupe via queued/in_progress |
 | `refresh` | Pull Tailscale IPs from artifacts into state |
 | `status [--json]` | Health + metrics per machine |
 | `exec "<cmd>"` | Parallel shell on all known IPs |
@@ -145,3 +146,32 @@ Keep **`fleet-control/config.json`**, tokens, and **`fleet-state.json`** local o
 - Τα μυστικά (tokens) μένουν στο τοπικό `config.json` / μεταβλητές περιβάλλοντος — **ποτέ** στο git.
 
 Για πλήρη ενσωμάτωση στο Teliko UI, χρειάζεται proxy από το frontend προς το CLI/API και οπτικοποίηση στους υπάρχοντες managers/sysmon panels.
+
+### Στόλος ~80 μηχανημάτων (5–10 λεπτά dispatch, 15–25 λεπτά IPs)
+
+**Στόχος:** ~80 RDP runners γρήγορα, χωρίς Docker στο PC — μόνο GitHub Actions + Tailscale.
+
+| Έννοια | Τι ισχύει |
+|--------|-----------|
+| **Μαθηματικά στόλου** | **10 λογαριασμοί GitHub × 8 workflows** = 80 μηχανήματα (`target_total`: 80, `machines_per_account`: 8). |
+| **Concurrent cap (free GHA)** | Περίπου **~20 ταυτόχρονα jobs ανά λογαριασμό**· με 10 λογαριασμούς στέλνεις **80 dispatches** χωρίς να περιμένεις serial 8×10×12 λεπτά. |
+| **Χρόνος dispatch** | Όλα τα `workflow_dispatch` μπορούν να μπουν στην ουρά σε **~5–10 λεπτά** (`scripts/provision-80.ps1` ή `node cli.js provision-fleet`). |
+| **Χρόνος μέχρι IP** | Κάθε LXDE job **~8–12 λεπτά** μέχρι artifact `tailscale-ip`· τα IPs **τρέχουν σταδιακά 15–25 λεπτά** (όχι όλα μαζί στο t=0). |
+| **Λεπτά χρέωσης GHA** | Χρεώνεσαι **διάρκεια job × αριθμός runners** (π.χ. 80 × ~10 min ≈ 800 runner-minutes ανά κύκλο — εξαρτάται από πλάνο/org). |
+
+**Ροή:**
+
+1. Αντίγραψε `config.example.json` → `config.json`· ενεργοποίησε **10** entries στο `accounts` (ή `github_accounts`) με `gh_user` + repo `USER/rdp-lxde`.
+2. Μία φορά ανά repo: secrets `TAILSCALE_AUTH_KEY`, `FLEET_AGENT_TOKEN` (`setup-account.ps1` — **δεν** ξανα-γράφει Tailscale αν υπάρχει ήδη secret).
+3. Γρήγορο fleet dispatch:
+
+   ```powershell
+   .\scripts\provision-80.ps1
+   # ή ένα CLI για όλους τους ενεργούς (tokens / gh auth):
+   cd fleet-control
+   node cli.js provision-fleet --cancel-duplicates
+   ```
+
+4. IPs: `node cli.js refresh` ή `.\scripts\auto-fleet-lifeownerteam.ps1 -PollOnly -Poll`.
+
+**`provision-fleet`** μετρά **queued / in_progress**, στέλνει μόνο το **κενό** μέχρι `target_total`, και με `--cancel-duplicates` ακυρώνει **περιττά queued** πάνω από το όριο ανά λογαριασμό.

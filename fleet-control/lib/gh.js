@@ -66,6 +66,25 @@ async function listWorkflowRuns(token, repo, workflowId, perPage = 30) {
   return json.workflow_runs || [];
 }
 
+function isActiveRun(run) {
+  const s = (run && run.status) || "";
+  return s === "queued" || s === "in_progress" || s === "waiting" || s === "pending";
+}
+
+function countActiveRuns(runs) {
+  return (runs || []).filter(isActiveRun).length;
+}
+
+function activeRuns(runs) {
+  return (runs || []).filter(isActiveRun);
+}
+
+async function cancelWorkflowRun(token, repo, runId) {
+  const [owner, name] = repo.split("/");
+  const path = `/repos/${owner}/${name}/actions/runs/${runId}/cancel`;
+  await ghRequest(token, "POST", path);
+}
+
 async function downloadArtifactZip(token, repo, artifactId) {
   const [owner, name] = repo.split("/");
   const meta = await ghRequest(
@@ -125,4 +144,8 @@ module.exports = {
   dispatchWorkflow,
   listWorkflowRuns,
   collectIpsForRuns,
+  isActiveRun,
+  countActiveRuns,
+  activeRuns,
+  cancelWorkflowRun,
 };

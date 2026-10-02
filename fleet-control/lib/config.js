@@ -15,6 +15,13 @@ function loadConfig() {
   }
   const cfg = JSON.parse(raw);
 
+  if (!cfg.github_accounts && Array.isArray(cfg.accounts)) {
+    cfg.github_accounts = cfg.accounts;
+  }
+  if (!cfg.accounts && Array.isArray(cfg.github_accounts)) {
+    cfg.accounts = cfg.github_accounts;
+  }
+
   const tokenEnv = cfg.fleet_agent_token_env || "FLEET_AGENT_TOKEN";
   if (process.env[tokenEnv]) {
     cfg.fleet_agent_token = process.env[tokenEnv];

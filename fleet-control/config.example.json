@@ -1,27 +1,92 @@
 {
   "agent_port": 8765,
   "machines_per_account": 8,
+  "target_total": 80,
+  "max_concurrent_dispatch_per_account": 8,
   "workflow_id": "rdp-alpine-openbox.yml",
   "workflow_name": "RDP Linux Desktop (LXDE)",
   "poll_interval_seconds": 30,
-  "github_accounts": [
+  "accounts": [
     {
-      "name": "primary",
+      "name": "acct-01",
       "enabled": true,
-      "token_env": "GH_TOKEN_PRIMARY",
+      "gh_user": "YOUR_GITHUB_USER_1",
+      "token_env": "GH_TOKEN_ACCT_01",
       "gh_host": "github.com",
-      "repos": ["YOUR_ORG/rdp-lxde"],
-      "machines_per_account": 8,
-      "secrets_note": "Repo needs TAILSCALE_AUTH_KEY and FLEET_AGENT_TOKEN (same value as fleet_agent_token below)"
+      "repos": ["YOUR_GITHUB_USER_1/rdp-lxde"],
+      "machines_per_account": 8
     },
     {
-      "name": "secondary",
+      "name": "acct-02",
       "enabled": false,
-      "token_env": "GH_TOKEN_SECONDARY",
-      "gh_host": "github.com",
-      "repos": ["OTHER_ORG/rdp-lxde"],
-      "machines_per_account": 8,
-      "manual_account_hint": "Enable only with real repos. Example GitHub login: ryansims046 — use that user's org/repo, not OTHER_ORG placeholders."
+      "gh_user": "YOUR_GITHUB_USER_2",
+      "token_env": "GH_TOKEN_ACCT_02",
+      "repos": ["YOUR_GITHUB_USER_2/rdp-lxde"],
+      "machines_per_account": 8
+    },
+    {
+      "name": "acct-03",
+      "enabled": false,
+      "gh_user": "YOUR_GITHUB_USER_3",
+      "token_env": "GH_TOKEN_ACCT_03",
+      "repos": ["YOUR_GITHUB_USER_3/rdp-lxde"],
+      "machines_per_account": 8
+    },
+    {
+      "name": "acct-04",
+      "enabled": false,
+      "gh_user": "YOUR_GITHUB_USER_4",
+      "token_env": "GH_TOKEN_ACCT_04",
+      "repos": ["YOUR_GITHUB_USER_4/rdp-lxde"],
+      "machines_per_account": 8
+    },
+    {
+      "name": "acct-05",
+      "enabled": false,
+      "gh_user": "YOUR_GITHUB_USER_5",
+      "token_env": "GH_TOKEN_ACCT_05",
+      "repos": ["YOUR_GITHUB_USER_5/rdp-lxde"],
+      "machines_per_account": 8
+    },
+    {
+      "name": "acct-06",
+      "enabled": false,
+      "gh_user": "YOUR_GITHUB_USER_6",
+      "token_env": "GH_TOKEN_ACCT_06",
+      "repos": ["YOUR_GITHUB_USER_6/rdp-lxde"],
+      "machines_per_account": 8
+    },
+    {
+      "name": "acct-07",
+      "enabled": false,
+      "gh_user": "YOUR_GITHUB_USER_7",
+      "token_env": "GH_TOKEN_ACCT_07",
+      "repos": ["YOUR_GITHUB_USER_7/rdp-lxde"],
+      "machines_per_account": 8
+    },
+    {
+      "name": "acct-08",
+      "enabled": false,
+      "gh_user": "YOUR_GITHUB_USER_8",
+      "token_env": "GH_TOKEN_ACCT_08",
+      "repos": ["YOUR_GITHUB_USER_8/rdp-lxde"],
+      "machines_per_account": 8
+    },
+    {
+      "name": "acct-09",
+      "enabled": false,
+      "gh_user": "YOUR_GITHUB_USER_9",
+      "token_env": "GH_TOKEN_ACCT_09",
+      "repos": ["YOUR_GITHUB_USER_9/rdp-lxde"],
+      "machines_per_account": 8
+    },
+    {
+      "name": "acct-10",
+      "enabled": false,
+      "gh_user": "YOUR_GITHUB_USER_10",
+      "token_env": "GH_TOKEN_ACCT_10",
+      "repos": ["YOUR_GITHUB_USER_10/rdp-lxde"],
+      "machines_per_account": 8
     }
   ],
   "tailscale": {
@@ -40,5 +105,6 @@
   "dashboard": {
     "bind": "127.0.0.1",
     "port": 8780
-  }
+  },
+  "fleet_note": "80 machines ≈ 10 enabled accounts × 8. GHA free tier ~20 concurrent jobs/account; dispatch all accounts quickly, IPs trickle in 15–25 min."
 }
