@@ -10,6 +10,8 @@
 !scripts/set-fleet-agent-github-secret.ps1
 !scripts/setup-account.ps1
 !scripts/auto-fleet-lifeownerteam.ps1
+!scripts/fleet.ps1
+!scripts/fleet-secrets.ps1
 !scripts/provision-80.ps1
 !scripts/.gitignore
 !fleet-control/

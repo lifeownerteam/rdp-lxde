@@ -2,6 +2,26 @@
 
 Orchestrate many **RDP Linux Desktop (LXDE)** GitHub Actions runners over Tailscale: provision workflows, track Tailscale IPs from artifacts, run shell commands in parallel, control Firefox, and view a simple metrics dashboard.
 
+## Self-service (no AI)
+
+From the **repo root**, use one wrapper — reads `fleet-control/config.json` and `fleet-control/.tailscale-api-key` (gitignored):
+
+```powershell
+.\scripts\fleet.ps1 help
+.\scripts\fleet.ps1 setup -Username YOUR_GITHUB_USER
+.\scripts\fleet.ps1 secrets
+.\scripts\fleet.ps1 provision 8      # dedupe: only missing runs toward 8 active
+.\scripts\fleet.ps1 provision 80     # all enabled accounts toward fleet target
+.\scripts\fleet.ps1 poll 8
+.\scripts\fleet.ps1 status
+.\scripts\fleet.ps1 clean-queue
+.\scripts\fleet.ps1 gui              # same as npm run gui in fleet-control/
+```
+
+Greek quick reference: **[FLEET-QUICKSTART-EL.md](./FLEET-QUICKSTART-EL.md)** — «Χωρίς AI — τρέξε αυτά».
+
+Legacy: `fleet-control/fleet.ps1` forwards to `scripts/fleet.ps1` (still supports `exec`, `firefox` via Node CLI).
+
 ## Architecture
 
 ```text
@@ -94,10 +114,12 @@ Placeholder repos (`OTHER_ORG`, `YOUR_*`) και `enabled: false` **δεν** χ�
 
 | Command | Description |
 |---------|-------------|
-| `provision [--account NAME] [--count N]` | Dispatch workflows per repo (default: primary account only) |
-| `provision-fleet [--account NAME] [--total N] [--cancel-duplicates]` | All enabled accounts; dispatch only missing runs toward `target_total`; dedupe via queued/in_progress |
+| `provision [N\|8\|80] [--account NAME]` | Dedupe dispatch toward N active runs (≥80 → multi-account fleet) |
+| `provision-fleet [--total N]` | Same as `provision 80` / `--fleet` |
+| `clean-queue` | Cancel all queued/in_progress LXDE runs on enabled accounts |
+| `poll [--target N] [--minutes M]` | Repeat `refresh` until N IPs or timeout |
 | `refresh` | Pull Tailscale IPs from artifacts into state |
-| `status [--json]` | Health + metrics per machine |
+| `status [--json]` | IPs table, queue counts, `gh` login + config account check |
 | `exec "<cmd>"` | Parallel shell on all known IPs |
 | `firefox open\|close\|status\|js` | Marionette-based tab control |
 

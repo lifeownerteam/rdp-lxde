@@ -151,9 +151,22 @@ async function main() {
   }
   const cfg = loadConfig();
   try {
-    if (cmd === "provision") await runProvisionCli(cfg, flags);
-    else if (cmd === "provision-fleet") await runProvisionFleetCli(cfg, flags);
-    else if (cmd === "refresh") await runRefreshCli(cfg, flags);
+    if (cmd === "provision") {
+      const n = positional[1];
+      if (n && !String(n).startsWith("-")) flags.count = n;
+      await runProvisionCli(cfg, flags);
+    } else if (cmd === "provision-fleet") await runProvisionFleetCli(cfg, flags);
+    else if (cmd === "clean-queue") {
+      await cmdCleanQueue(cfg, flags, (ev) => {
+        if (ev.type === "log") console.log(ev.message);
+      });
+    } else if (cmd === "poll") {
+      const n = positional[1];
+      if (n && !String(n).startsWith("-")) flags.target = n;
+      await cmdPoll(cfg, flags, (ev) => {
+        if (ev.type === "log") console.log(ev.message);
+      });
+    } else if (cmd === "refresh") await runRefreshCli(cfg, flags);
     else if (cmd === "status") await cmdStatus(cfg, flags);
     else if (cmd === "exec") await cmdExec(cfg, positional.slice(1).join(" ") || flags._);
     else if (cmd === "firefox") await cmdFirefox(cfg, positional[1], flags, positional.slice(2));
