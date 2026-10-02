@@ -47,15 +47,24 @@ def ensure_firefox_profiles() -> None:
         ],
         check=True,
     )
+    def _create_profile(label: str, path: str) -> None:
+        disp = rdp_display()
+        num = disp.split(":")[1].split(".")[0]
+        if os.path.exists(f"/tmp/.X11-unix/X{num}"):
+            prefix = f"DISPLAY={shlex.quote(disp)} "
+        else:
+            prefix = "xvfb-run -a "
+        _run_as_rdp(f'{prefix}{FF_BIN} -CreateProfile "{label} {path}"', check=False)
+
     if not os.path.isfile(f"{FLEET_PROFILE}/times.json"):
-        _run_as_rdp(f'{FF_BIN} -CreateProfile "fleet {FLEET_PROFILE}"', check=False)
+        _create_profile("fleet", FLEET_PROFILE)
     profiles_ini = f"{moz_dir}/profiles.ini"
     if not os.path.isfile(profiles_ini):
-        _run_as_rdp(f'{FF_BIN} -CreateProfile "default {DESKTOP_PROFILE}"', check=False)
+        _create_profile("default", DESKTOP_PROFILE)
     elif not os.path.isdir(DESKTOP_PROFILE):
         broken = f"{moz_dir}/profiles.ini.broken-{int(time.time())}"
         os.rename(profiles_ini, broken)
-        _run_as_rdp(f'{FF_BIN} -CreateProfile "default {DESKTOP_PROFILE}"', check=False)
+        _create_profile("default", DESKTOP_PROFILE)
     subprocess.run(["chown", "-R", f"{RDP_USER}:{RDP_USER}", home], check=False)
 
 

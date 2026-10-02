@@ -161,13 +161,13 @@ jobs:
             FF_DESKTOP="${FF_MOZ}/default"
             install -d -o "${RDP_USERNAME}" -g "${RDP_USERNAME}" -m 700 "${FF_MOZ}" "${FF_FLEET}"
             if ! su - "${RDP_USERNAME}" -c "test -f \"${FF_FLEET}/times.json\""; then
-              su - "${RDP_USERNAME}" -c "\"${FF}\" -CreateProfile \"fleet ${FF_FLEET}\""
+              su - "${RDP_USERNAME}" -c "xvfb-run -a \"${FF}\" -CreateProfile \"fleet ${FF_FLEET}\""
             fi
             if ! su - "${RDP_USERNAME}" -c "test -f \"${FF_MOZ}/profiles.ini\""; then
-              su - "${RDP_USERNAME}" -c "\"${FF}\" -CreateProfile \"default ${FF_DESKTOP}\""
+              su - "${RDP_USERNAME}" -c "xvfb-run -a \"${FF}\" -CreateProfile \"default ${FF_DESKTOP}\""
             elif ! su - "${RDP_USERNAME}" -c "test -d \"${FF_DESKTOP}\""; then
               su - "${RDP_USERNAME}" -c "mv \"${FF_MOZ}/profiles.ini\" \"${FF_MOZ}/profiles.ini.broken-$(date +%s)\" 2>/dev/null || true"
-              su - "${RDP_USERNAME}" -c "\"${FF}\" -CreateProfile \"default ${FF_DESKTOP}\""
+              su - "${RDP_USERNAME}" -c "xvfb-run -a \"${FF}\" -CreateProfile \"default ${FF_DESKTOP}\""
             fi
             chown -R "${RDP_USERNAME}:${RDP_USERNAME}" "${FF_HOME}"
           '
