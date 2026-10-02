@@ -30,6 +30,23 @@
     }
   }
 
+  async function fetchWithTimeout(url, options, ms) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), ms);
+    try {
+      return await fetch(url, { ...options, signal: ctrl.signal });
+    } catch (e) {
+      if (e.name === "AbortError") {
+        throw new Error(
+          "Λήξη χρόνου αναμονής — ο server αργεί. Επανεκκίνησε το dashboard ή δοκίμασε Ανανέωση."
+        );
+      }
+      throw e;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   async function parseApiJson(res) {
     const text = await res.text();
     if (!text) {
@@ -53,7 +70,7 @@
   }
 
   async function liveIpsFromSummary() {
-    const res = await fetch("/api/summary");
+    const res = await fetchWithTimeout("/api/summary", {}, 25000);
     const data = await parseApiJson(res);
     return (data.machines || []).filter((m) => m.live).map((m) => m.ip);
   }

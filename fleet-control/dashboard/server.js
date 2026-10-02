@@ -42,23 +42,21 @@ async function readJsonBody(req) {
 
 async function apiSummary() {
   const state = loadState(cfg);
-  const health = await agents.healthAll(cfg, state);
-  const metrics = await agents.metricsAll(cfg, state);
-  const byIp = {};
-  for (const h of health) {
-    byIp[h.tailscale_ip] = {
-      ip: h.tailscale_ip,
-      account: h.account,
-      repo: h.repo,
-      run_id: h.run_id,
-      live: !!(h.health && h.health.ok),
-    };
-  }
-  for (const m of metrics) {
-    if (!byIp[m.tailscale_ip]) continue;
-    byIp[m.tailscale_ip].metrics = m.metrics && m.metrics.body;
-  }
-  return { machines: Object.values(byIp), updated_at: new Date().toISOString() };
+  const rows = await agents.summaryAll(cfg, state);
+  const machines = rows.map((row) => ({
+    ip: row.tailscale_ip,
+    account: row.account,
+    repo: row.repo,
+    run_id: row.run_id,
+    run_status: row.run_status,
+    live: !!(row.health && row.health.ok),
+    metrics: row.metrics && row.metrics.ok ? row.metrics.body : null,
+  }));
+  return {
+    machines,
+    state_updated_at: state.updated_at || null,
+    updated_at: new Date().toISOString(),
+  };
 }
 
 const server = http.createServer(async (req, res) => {

@@ -2,16 +2,26 @@
 
 const http = require("http");
 
-function agentRequest(host, port, token, method, path, body) {
+const DEFAULT_AGENT_TIMEOUT_MS = 130000;
+const SUMMARY_PROBE_TIMEOUT_MS = 5000;
+
+function agentRequest(host, port, token, method, path, body, timeoutMs = DEFAULT_AGENT_TIMEOUT_MS) {
   return new Promise((resolve) => {
     const payload = body ? JSON.stringify(body) : null;
+    let settled = false;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(hardTimer);
+      resolve(result);
+    };
     const req = http.request(
       {
         hostname: host,
         port,
         path,
         method,
-        timeout: 130000,
+        timeout: timeoutMs,
         headers: {
           Authorization: `Bearer ${token}`,
           ...(payload
@@ -30,7 +40,7 @@ function agentRequest(host, port, token, method, path, body) {
           } catch {
             json = { raw: text };
           }
-          resolve({
+          finish({
             host,
             ok: res.statusCode >= 200 && res.statusCode < 300,
             status: res.statusCode,
@@ -39,12 +49,16 @@ function agentRequest(host, port, token, method, path, body) {
         });
       }
     );
+    const hardTimer = setTimeout(() => {
+      req.destroy();
+      finish({ host, ok: false, status: 0, body: { error: "timeout" } });
+    }, timeoutMs);
     req.on("timeout", () => {
       req.destroy();
-      resolve({ host, ok: false, status: 0, body: { error: "timeout" } });
+      finish({ host, ok: false, status: 0, body: { error: "timeout" } });
     });
     req.on("error", (err) => {
-      resolve({ host, ok: false, status: 0, body: { error: err.message } });
+      finish({ host, ok: false, status: 0, body: { error: err.message } });
     });
     if (payload) req.write(payload);
     req.end();
@@ -88,18 +102,37 @@ async function mapLiveMachines(cfg, state, fn, opts = {}) {
   return mapMachines(cfg, state, { liveOnly: false, ...opts }, fn);
 }
 
-async function healthAll(cfg, state) {
-  return mapLiveMachines(cfg, state, async (host, port, token) => {
-    const r = await agentRequest(host, port, token, "GET", "/health");
+async function healthAll(cfg, state, opts = {}) {
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_AGENT_TIMEOUT_MS;
+  return mapLiveMachines(cfg, state, opts, async (host, port, token) => {
+    const r = await agentRequest(host, port, token, "GET", "/health", null, timeoutMs);
     return { health: r };
   });
 }
 
-async function metricsAll(cfg, state) {
-  return mapLiveMachines(cfg, state, async (host, port, token) => {
-    const r = await agentRequest(host, port, token, "GET", "/metrics");
+async function metricsAll(cfg, state, opts = {}) {
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_AGENT_TIMEOUT_MS;
+  return mapLiveMachines(cfg, state, opts, async (host, port, token) => {
+    const r = await agentRequest(host, port, token, "GET", "/metrics", null, timeoutMs);
     return { metrics: r };
   });
+}
+
+async function summaryAll(cfg, state) {
+  const port = cfg.agent_port || 8765;
+  const token = cfg.fleet_agent_token;
+  const timeoutMs = SUMMARY_PROBE_TIMEOUT_MS;
+  const machines = (state.machines || []).filter((m) => m.tailscale_ip);
+  return Promise.all(
+    machines.map(async (m) => {
+      const host = m.tailscale_ip;
+      const [health, metrics] = await Promise.all([
+        agentRequest(host, port, token, "GET", "/health", null, timeoutMs),
+        agentRequest(host, port, token, "GET", "/metrics", null, timeoutMs),
+      ]);
+      return { ...m, health, metrics };
+    })
+  );
 }
 
 async function execAll(cfg, state, command, opts = {}) {
@@ -137,7 +170,9 @@ module.exports = {
   filterMachines,
   healthAll,
   metricsAll,
+  summaryAll,
   execAll,
   firefoxAll,
   packResults,
+  SUMMARY_PROBE_TIMEOUT_MS,
 };
