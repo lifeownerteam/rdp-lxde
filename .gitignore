@@ -28,3 +28,6 @@ fleet-control/fleet-state.json
 fleet-control/.tailscale-api-key
 fleet-control/_debug*.js
 fleet-control/_test*.js
+fleet-control/_dltest/
+fleet-control/_sample.zip
+fleet-control/*.zip
