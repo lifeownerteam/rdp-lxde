@@ -434,16 +434,17 @@ async function cmdPoll(cfg, flags, onEvent) {
   const intervalSec = parseInt(flags.interval || cfg.poll_interval_seconds || 30, 10);
   const deadline = Date.now() + minutes * 60 * 1000;
 
-  emit(`Poll: refresh every ${intervalSec}s for up to ${minutes} min (target ${targetIps} IP(s))`);
+  emit(
+    `Poll: refresh every ${intervalSec}s for up to ${minutes} min (target ${targetIps} LIVE agent(s))`
+  );
   while (Date.now() < deadline) {
     await cmdRefresh(cfg, flags, emit);
-    const state = loadState(cfg);
-    const ips = new Set(
-      (state.machines || []).map((m) => m.tailscale_ip).filter(Boolean)
+    const m = await watchMetrics(cfg, flags);
+    emit(
+      `  live=${m.liveCount}/${targetIps} active_runs=${m.activeTotal} ips_in_state=${m.withIpCount}${m.allDown ? " all_DOWN" : ""}`
     );
-    emit(`  have ${ips.size}/${targetIps} unique IP(s)`);
-    if (ips.size >= targetIps) {
-      emit("Poll complete: target IP count reached.");
+    if (m.liveCount >= targetIps) {
+      emit("Poll complete: target LIVE agent count reached.");
       return;
     }
     const remaining = Math.max(0, deadline - Date.now());

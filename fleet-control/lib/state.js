@@ -55,11 +55,9 @@ function upsertMachine(state, machine) {
   }
 }
 
-/** Drop machine rows whose run_id is not active and not in the keep set (e.g. recent runs with IP). */
-function pruneMachinesToActiveRuns(state, activeRunIds, alsoKeepRunIds) {
-  const keep = new Set(
-    [...(activeRunIds || []), ...(alsoKeepRunIds || [])].map((id) => Number(id))
-  );
+/** Drop machine rows whose workflow run is not queued/in_progress (see gh.activeRuns). */
+function pruneMachinesToActiveRuns(state, activeRunIds, _alsoKeepRunIds) {
+  const keep = new Set((activeRunIds || []).map((id) => Number(id)));
   const before = (state.machines || []).length;
   state.machines = (state.machines || []).filter((m) => m.run_id && keep.has(Number(m.run_id)));
   return { before, after: state.machines.length, removed: before - state.machines.length };
