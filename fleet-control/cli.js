@@ -2,8 +2,8 @@
 "use strict";
 
 const { loadConfig } = require("./lib/config");
-const { loadState, saveState, upsertMachine } = require("./lib/state");
-const gh = require("./lib/gh");
+const { loadState } = require("./lib/state");
+const { cmdProvision, cmdRefresh } = require("./lib/commands");
 const agents = require("./lib/agents");
 
 function usage() {
@@ -46,62 +46,16 @@ function parseArgs(argv) {
   return { flags, positional };
 }
 
-function accountsFor(cfg, accountName) {
-  let list = cfg.github_accounts || [];
-  if (accountName) {
-    list = list.filter((a) => a.name === accountName);
-  }
-  return list.filter((a) => a.token);
+async function runProvisionCli(cfg, flags) {
+  await cmdProvision(cfg, flags, (ev) => {
+    if (ev.type === "log") console.log(ev.message);
+  });
 }
 
-async function cmdProvision(cfg, flags) {
-  const state = loadState(cfg);
-  const accts = accountsFor(cfg, flags.account);
-  if (!accts.length) {
-    throw new Error("No GitHub account with token (set token_env env vars or token in local config)");
-  }
-  for (const acct of accts) {
-    for (const repo of acct.repos || []) {
-      const count = parseInt(flags.count || acct.machines_per_account || cfg.machines_per_account || 8, 10);
-      console.log(`Provisioning ${count} runs on ${repo} (${acct.name})...`);
-      for (let i = 0; i < count; i++) {
-        await gh.dispatchWorkflow(acct.token, repo, cfg.workflow_id);
-        state.runs.push({
-          account: acct.name,
-          repo,
-          dispatched_at: new Date().toISOString(),
-        });
-        await new Promise((r) => setTimeout(r, 1500));
-      }
-    }
-  }
-  saveState(cfg, state);
-  console.log("Dispatched. Run: node cli.js refresh");
-}
-
-async function cmdRefresh(cfg, flags) {
-  const state = loadState(cfg);
-  const accts = accountsFor(cfg, flags.account);
-  for (const acct of accts) {
-    for (const repo of acct.repos || []) {
-      const runs = await gh.listWorkflowRuns(acct.token, repo, cfg.workflow_id, 50);
-      const withIp = await gh.collectIpsForRuns(acct.token, repo, runs);
-      for (const row of withIp) {
-        upsertMachine(state, {
-          account: acct.name,
-          repo,
-          run_id: row.run_id,
-          tailscale_ip: row.tailscale_ip,
-          run_status: row.status,
-          conclusion: row.conclusion,
-          agent_port: cfg.agent_port || 8765,
-          updated_at: new Date().toISOString(),
-        });
-      }
-      console.log(`${repo}: ${withIp.length} runs with tailscale-ip artifact`);
-    }
-  }
-  saveState(cfg, state);
+async function runRefreshCli(cfg, flags) {
+  await cmdRefresh(cfg, flags, (ev) => {
+    if (ev.type === "log") console.log(ev.message);
+  });
 }
 
 async function cmdStatus(cfg, flags) {
@@ -208,8 +162,8 @@ async function main() {
   }
   const cfg = loadConfig();
   try {
-    if (cmd === "provision") await cmdProvision(cfg, flags);
-    else if (cmd === "refresh") await cmdRefresh(cfg, flags);
+    if (cmd === "provision") await runProvisionCli(cfg, flags);
+    else if (cmd === "refresh") await runRefreshCli(cfg, flags);
     else if (cmd === "status") await cmdStatus(cfg, flags);
     else if (cmd === "exec") await cmdExec(cfg, positional.slice(1).join(" ") || flags._);
     else if (cmd === "firefox") await cmdFirefox(cfg, positional[1], flags, positional.slice(2));

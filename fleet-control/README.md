@@ -46,6 +46,26 @@ Orchestrate many **RDP Linux Desktop (LXDE)** GitHub Actions runners over Tailsc
 
    Open `http://127.0.0.1:8780/`.
 
+### GUI (Ελληνικά κουμπιά)
+
+Από τον φάκελο `fleet-control/`:
+
+```powershell
+npm run dashboard
+# ή ισοδύναμα:
+npm run gui
+```
+
+Άνοιξε **`http://127.0.0.1:8780/`** (ή `/gui`).
+
+| Κουμπί | Λειτουργία |
+|--------|------------|
+| **Σύνδεση GitHub** | Ανοίγει ορατό τερματικό με `gh auth login` (browser / device code). Δεν υπάρχουν πεδία κωδικού στο UI. |
+| **Έναρξη 8 μηχανών** | Τρέχει την ίδια λογική με `node cli.js provision --count 8` και δείχνει πρόοδο. |
+| **Ανανέωση** | `refresh` — IPs από artifacts + πίνακας κατάστασης (όπως το dashboard). |
+
+Το `gh` αναζητάται πρώτα στο `D:\Tools\gh\bin\gh.exe`, αλλιώς στο PATH.
+
 ## CLI reference
 
 | Command | Description |

@@ -1,23 +1,57 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="el">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Fleet Control</title>
   <style>
     :root { font-family: system-ui, sans-serif; background: #0f1419; color: #e7ecf1; }
-    body { margin: 1.5rem; }
-    h1 { font-size: 1.25rem; font-weight: 600; }
+    body { margin: 1.5rem; max-width: 960px; }
+    h1 { font-size: 1.25rem; font-weight: 600; margin-bottom: 0.5rem; }
+    .toolbar { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 1rem 0; }
+    button {
+      background: #1a2332; color: #e7ecf1; border: 1px solid #3d4f66;
+      padding: 0.5rem 0.85rem; border-radius: 6px; cursor: pointer; font-size: 0.9rem;
+    }
+    button:hover:not(:disabled) { background: #243044; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    button.primary { border-color: #3dd68c; color: #3dd68c; }
     table { border-collapse: collapse; width: 100%; margin-top: 1rem; }
     th, td { text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid #2a3441; }
     .live { color: #3dd68c; }
     .down { color: #f07178; }
     .meta { color: #8b9cb3; font-size: 0.85rem; }
+    .panel {
+      background: #151c26; border: 1px solid #2a3441; border-radius: 8px;
+      padding: 0.75rem 1rem; margin-top: 1rem; font-size: 0.85rem;
+    }
+    .panel h2 { font-size: 0.95rem; margin: 0 0 0.5rem; font-weight: 600; }
+    #log, #ghStatus { white-space: pre-wrap; max-height: 10rem; overflow-y: auto; color: #b8c5d6; }
+    .ok { color: #3dd68c; }
+    .warn { color: #ffcc66; }
   </style>
 </head>
 <body>
-  <h1>Fleet machines</h1>
-  <p class="meta" id="updated">Loading…</p>
+  <h1>Fleet Control</h1>
+  <p class="meta">Τοπικό dashboard — χωρίς αποθήκευση κωδικών στο UI</p>
+
+  <div class="toolbar">
+    <button type="button" id="btnGh">Σύνδεση GitHub</button>
+    <button type="button" id="btnProvision" class="primary">Έναρξη 8 μηχανών</button>
+    <button type="button" id="btnRefresh">Ανανέωση</button>
+  </div>
+
+  <div class="panel">
+    <h2>GitHub</h2>
+    <div id="ghStatus">Φόρτωση…</div>
+  </div>
+
+  <div class="panel">
+    <h2>Πρόοδος</h2>
+    <div id="log">—</div>
+  </div>
+
+  <p class="meta" id="updated">Μηχανές — φόρτωση…</p>
   <table>
     <thead>
       <tr>
@@ -30,12 +64,112 @@
     </thead>
     <tbody id="rows"></tbody>
   </table>
+
   <script>
-    async function refresh() {
+    let lastLogLen = 0;
+
+    function appendLogs(container, logs, reset) {
+      if (reset) {
+        container.textContent = "";
+        lastLogLen = 0;
+      }
+      if (!logs || !logs.length) return;
+      if (logs.length <= lastLogLen) return;
+      for (let i = lastLogLen; i < logs.length; i++) {
+        container.textContent += (container.textContent && container.textContent !== "—" ? "\n" : "") + logs[i].message;
+      }
+      lastLogLen = logs.length;
+      container.scrollTop = container.scrollHeight;
+    }
+
+    async function loadGhStatus() {
+      const el = document.getElementById("ghStatus");
+      try {
+        const res = await fetch("/api/github/status");
+        const data = await res.json();
+        let text = "gh: " + (data.gh_path || "?") + "\n";
+        if (data.loggedIn) {
+          text += "Συνδεδεμένος: " + (data.account || "github.com") + "\n";
+          el.className = "ok";
+        } else {
+          text += "Δεν είσαι συνδεδεμένος. Πάτα «Σύνδεση GitHub» (browser στο τερματικό).\n";
+          el.className = "warn";
+        }
+        if (data.deviceCode) text += "Device code: " + data.deviceCode + "\n";
+        if (data.refresh_hint) text += data.refresh_hint + "\n";
+        if (data.raw) text += "\n" + data.raw;
+        el.textContent = text.trim();
+      } catch (e) {
+        el.textContent = "Σφάλμα: " + e.message;
+        el.className = "warn";
+      }
+    }
+
+    async function pollJob(statusUrl, logEl, btn) {
+      btn.disabled = true;
+      lastLogLen = 0;
+      logEl.textContent = "";
+      const tick = async () => {
+        const res = await fetch(statusUrl);
+        const job = await res.json();
+        appendLogs(logEl, job.logs, false);
+        if (job.error) logEl.textContent += "\nΣφάλμα: " + job.error;
+        if (job.running) {
+          setTimeout(tick, 800);
+        } else {
+          btn.disabled = false;
+          refreshSummary();
+        }
+      };
+      await tick();
+    }
+
+    document.getElementById("btnGh").addEventListener("click", async () => {
+      const btn = document.getElementById("btnGh");
+      btn.disabled = true;
+      try {
+        const res = await fetch("/api/github/connect", { method: "POST" });
+        const data = await res.json();
+        document.getElementById("ghStatus").textContent = data.message || "Άνοιξε το τερματικό.";
+        setTimeout(loadGhStatus, 3000);
+      } catch (e) {
+        document.getElementById("ghStatus").textContent = e.message;
+      } finally {
+        btn.disabled = false;
+      }
+    });
+
+    document.getElementById("btnProvision").addEventListener("click", async () => {
+      const btn = document.getElementById("btnProvision");
+      const logEl = document.getElementById("log");
+      const res = await fetch("/api/provision", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ count: 8 }),
+      });
+      if (res.status === 409) {
+        logEl.textContent = "Η provision τρέχει ήδη.";
+        return;
+      }
+      await pollJob("/api/provision/status", logEl, btn);
+    });
+
+    document.getElementById("btnRefresh").addEventListener("click", async () => {
+      const btn = document.getElementById("btnRefresh");
+      const logEl = document.getElementById("log");
+      const res = await fetch("/api/refresh", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+      if (res.status === 409) {
+        logEl.textContent = "Η ανανέωση τρέχει ήδη.";
+        return;
+      }
+      await pollJob("/api/refresh/status", logEl, btn);
+    });
+
+    async function refreshSummary() {
       const res = await fetch("/api/summary");
       const data = await res.json();
       document.getElementById("updated").textContent =
-        "Updated " + (data.updated_at || "") + " — auto-refresh 10s";
+        "Ενημερώθηκε " + (data.updated_at || "") + " — αυτόματη ανανέωση 10s";
       const tbody = document.getElementById("rows");
       tbody.innerHTML = "";
       for (const m of data.machines || []) {
@@ -50,8 +184,11 @@
         tbody.appendChild(tr);
       }
     }
-    refresh();
-    setInterval(refresh, 10000);
+
+    loadGhStatus();
+    refreshSummary();
+    setInterval(refreshSummary, 10000);
+    setInterval(loadGhStatus, 30000);
   </script>
 </body>
 </html>

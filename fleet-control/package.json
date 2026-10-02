@@ -5,6 +5,7 @@
   "description": "CLI and dashboard for RDP LXDE GitHub Actions fleet",
   "scripts": {
     "status": "node cli.js status",
-    "dashboard": "node dashboard/server.js"
+    "dashboard": "node dashboard/server.js",
+    "gui": "node dashboard/server.js"
   }
 }
