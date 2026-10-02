@@ -9,7 +9,10 @@ function loadConfig() {
   const cfgPath =
     process.env.FLEET_CONFIG ||
     path.join(ROOT, fs.existsSync(path.join(ROOT, "config.json")) ? "config.json" : "config.example.json");
-  const raw = fs.readFileSync(cfgPath, "utf8");
+  let raw = fs.readFileSync(cfgPath, "utf8");
+  if (raw.charCodeAt(0) === 0xfeff) {
+    raw = raw.slice(1);
+  }
   const cfg = JSON.parse(raw);
 
   const tokenEnv = cfg.fleet_agent_token_env || "FLEET_AGENT_TOKEN";
