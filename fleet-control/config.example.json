@@ -7,6 +7,7 @@
   "github_accounts": [
     {
       "name": "primary",
+      "enabled": true,
       "token_env": "GH_TOKEN_PRIMARY",
       "gh_host": "github.com",
       "repos": ["YOUR_ORG/rdp-lxde"],

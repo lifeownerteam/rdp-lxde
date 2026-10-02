@@ -8,6 +8,7 @@
 !scripts/
 !scripts/set-tailscale-github-secret.ps1
 !scripts/set-fleet-agent-github-secret.ps1
+!scripts/setup-account.ps1
 !scripts/.gitignore
 !fleet-control/
 !fleet-control/**

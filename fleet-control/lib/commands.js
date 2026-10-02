@@ -81,6 +81,7 @@ function listAccountOptions(cfg) {
     else if (!repos.length) reason = "placeholder repos only";
     return {
       name: a.name,
+      enabled: a.enabled !== false,
       provisionable: !reason,
       reason,
       repos,

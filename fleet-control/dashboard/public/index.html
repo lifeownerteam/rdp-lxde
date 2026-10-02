@@ -161,9 +161,9 @@
         const res = await fetch("/api/accounts");
         const data = await res.json();
         sel.innerHTML = "";
-        const list = data.accounts || [];
+        const list = (data.accounts || []).filter((a) => a.enabled !== false);
         const usable = list.filter((a) => a.provisionable);
-        const options = usable.length ? usable : list;
+        const options = list.length ? list : [];
         for (const a of options) {
           const opt = document.createElement("option");
           opt.value = a.name;

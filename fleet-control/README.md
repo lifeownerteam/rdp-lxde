@@ -36,6 +36,7 @@ Orchestrate many **RDP Linux Desktop (LXDE)** GitHub Actions runners over Tailsc
 4. From `fleet-control/`:
 
    ```powershell
+   .\fleet.ps1 setup-account -Username YOUR_GITHUB_USER
    .\fleet.ps1 provision --account primary
    .\fleet.ps1 refresh
    .\fleet.ps1 status
@@ -65,6 +66,28 @@ npm run gui
 | **Ανανέωση** | `refresh` — IPs από artifacts + πίνακας κατάστασης (όπως το dashboard). |
 
 Το `gh` αναζητάται πρώτα στο `D:\Tools\gh\bin\gh.exe`, αλλιώς στο PATH.
+
+### Automation τοπικά — εσύ βάζεις 2FA στο browser, όχι στο chat
+
+Για νέο GitHub user (π.χ. `ryansims046`) **χωρίς** κωδικούς ή 2FA στο chat:
+
+```powershell
+# από fleet-control/
+.\fleet.ps1 setup-account -Username ryansims046
+# ή:
+npm run setup-account -- -Username ryansims046
+```
+
+Το script:
+
+1. Κάνει `gh auth switch` στον user και, αν χρειάζεται, ανοίγει **τερματικό** με `gh auth login -w` — **εσύ** ολοκληρώνεις login + 2FA στο browser.
+2. Δημιουργεί `USER/rdp-lxde` αν λείπει και κάνει push το `main`.
+3. Ζητά **τοπικά** (κρυφό `Read-Host`) `TAILSCALE_AUTH_KEY` και `FLEET_AGENT_TOKEN` — δεν τυπώνονται.
+4. Θέτει GitHub repo secrets και γράφει τοπικό `config.json` (μόνο **primary** ενεργό, υπόλοιποι λογαριασμοί `enabled: false`).
+
+Μετά: `npm run gui` → dropdown **ενεργών** λογαριασμών → **Έναρξη 8 μηχανών** μόνο για τον επιλεγμένο.
+
+Placeholder repos (`OTHER_ORG`, `YOUR_*`) και `enabled: false` **δεν** χρησιμοποιούνται στην provision.
 
 ## CLI reference
 
