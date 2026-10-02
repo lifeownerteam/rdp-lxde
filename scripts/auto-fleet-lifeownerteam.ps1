@@ -153,7 +153,7 @@ $deadline = (Get-Date).AddMinutes($PollMinutes)
 $found = @{}
 while ((Get-Date) -lt $deadline) {
   $recent = & $Gh run list --repo $Repo --workflow $Workflow --limit 12 `
-    --json databaseId, status, conclusion, createdAt | ConvertFrom-Json
+    --json "databaseId,status,conclusion,createdAt" | ConvertFrom-Json
   foreach ($run in $recent) {
     if ($found.ContainsKey($run.databaseId)) { continue }
     if ($run.status -ne "completed" -or $run.conclusion -ne "success") { continue }
