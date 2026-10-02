@@ -78,7 +78,7 @@ function New-TailscaleAuthKey {
 }
 
 if (-not (Test-Path -LiteralPath $ConfigPath)) {
-  Write-Error "Missing $ConfigPath — copy config.example.json to config.json first."
+  Write-Error "Missing $ConfigPath - copy config.example.json to config.json first."
   exit 2
 }
 
@@ -103,9 +103,13 @@ if (-not $agentToken -and $cfg.fleet_agent_token -and $cfg.fleet_agent_token -no
 foreach ($acct in $enabled) {
   $ghUser = $acct.gh_user
   if ($ghUser) {
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
     & $Gh auth switch -u $ghUser 2>&1 | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-      Write-Warning "gh auth switch -u $ghUser failed — continuing with current gh user"
+    $switchCode = $LASTEXITCODE
+    $ErrorActionPreference = $prevEap
+    if ($switchCode -ne 0) {
+      Write-Warning "gh auth switch -u $ghUser failed - continuing with current gh user"
     }
   }
 
@@ -114,14 +118,14 @@ foreach ($acct in $enabled) {
     Write-Host "Secrets: $repo ($($acct.name))"
 
     if (Test-GhRepoSecret -TargetRepo $repo -SecretName "TAILSCALE_AUTH_KEY") {
-      Write-Host "  TAILSCALE_AUTH_KEY: already set — skip"
+      Write-Host "  TAILSCALE_AUTH_KEY: already set - skip"
     } else {
       $apiKey = Get-TsApiKey
       if (-not $apiKey) {
         Write-Error "Need Tailscale API key in $KeyFile (or env) to create TAILSCALE_AUTH_KEY"
         exit 2
       }
-      Write-Host "  TAILSCALE_AUTH_KEY: creating via Tailscale API…"
+      Write-Host "  TAILSCALE_AUTH_KEY: creating via Tailscale API..."
       $authKey = New-TailscaleAuthKey -ApiKey $apiKey
       Set-GhRepoSecretFromValue -Name "TAILSCALE_AUTH_KEY" -Value $authKey -TargetRepo $repo
       Write-Host "  TAILSCALE_AUTH_KEY: set"
@@ -129,12 +133,12 @@ foreach ($acct in $enabled) {
 
     if ($SkipAgentToken) { continue }
     if (Test-GhRepoSecret -TargetRepo $repo -SecretName "FLEET_AGENT_TOKEN") {
-      Write-Host "  FLEET_AGENT_TOKEN: already set — skip"
+      Write-Host "  FLEET_AGENT_TOKEN: already set - skip"
     } elseif ($agentToken) {
       Set-GhRepoSecretFromValue -Name "FLEET_AGENT_TOKEN" -Value $agentToken -TargetRepo $repo
       Write-Host "  FLEET_AGENT_TOKEN: set"
     } else {
-      Write-Warning "  FLEET_AGENT_TOKEN: not set locally — use `$env:FLEET_AGENT_TOKEN or setup-account"
+      Write-Warning "  FLEET_AGENT_TOKEN: not set locally - use env FLEET_AGENT_TOKEN or setup-account"
     }
   }
 }
