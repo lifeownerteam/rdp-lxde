@@ -94,7 +94,7 @@ function New-TailscaleAuthKey {
 function Get-ActiveWorkflowCount {
   param([string]$TargetRepo, [string]$WorkflowFile, [int]$Limit = 30)
   $recent = & $Gh run list --repo $TargetRepo --workflow $WorkflowFile --limit $Limit `
-    --json databaseId, status | ConvertFrom-Json
+    --json databaseId,status | ConvertFrom-Json
   if (-not $recent) { return 0 }
   $active = @($recent | Where-Object { $_.status -in @("queued", "in_progress", "waiting", "pending") })
   return $active.Count
