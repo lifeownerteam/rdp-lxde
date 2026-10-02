@@ -70,7 +70,7 @@
   }
 
   async function liveIpsFromSummary() {
-    const res = await fetchWithTimeout("/api/summary", {}, 25000);
+    const res = await fetchWithTimeout("/api/summary", {}, 45000);
     const data = await parseApiJson(res);
     return (data.machines || []).filter((m) => m.live).map((m) => m.ip);
   }

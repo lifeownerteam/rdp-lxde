@@ -9,7 +9,7 @@
  * Env: FLEET_AGENT_TOKEN or fleet-control/config.json fleet_agent_token
  */
 
-const fs = require("fs");
+const os = require("os");
 const path = require("path");
 const { spawnSync } = require("child_process");
 const { loadConfig } = require("../lib/config");
@@ -35,7 +35,40 @@ function dockerStartCmd(token) {
   ].join(" && ");
 }
 
-function tailscaleSsh(host, remoteCmd) {
+function tailnetSuffixFromStatus() {
+  const st = spawnSync("tailscale", ["status", "--json"], { encoding: "utf8", timeout: 15000 });
+  if (st.status !== 0 || !st.stdout) return null;
+  try {
+    const j = JSON.parse(st.stdout);
+    const selfDns = (j.Self && j.Self.DNSName) || "";
+    const m = selfDns.match(/\.([a-z0-9-]+\.ts\.net)/i);
+    return m ? m[1] : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Pre-populate OpenSSH known_hosts for gh-runner MagicDNS (tailscale ssh strict check). */
+function ensureSshHostKey(runId, ip) {
+  const suffix = tailnetSuffixFromStatus();
+  if (!suffix || !runId) return;
+  const host = `gh-runner-${runId}.${suffix}`;
+  const scan = spawnSync("ssh-keyscan", ["-t", "ed25519", host], {
+    encoding: "utf8",
+    timeout: 20000,
+    shell: false,
+  });
+  if (!(scan.stdout || "").includes("ssh-ed25519")) return;
+  const kh = path.join(os.homedir(), ".ssh", "known_hosts");
+  const existing = spawnSync("ssh-keygen", ["-F", host], { encoding: "utf8" });
+  if (existing.stdout && existing.stdout.trim()) return;
+  const fs = require("fs");
+  fs.mkdirSync(path.dirname(kh), { recursive: true });
+  fs.appendFileSync(kh, scan.stdout, "utf8");
+}
+
+function tailscaleSsh(host, remoteCmd, runId) {
+  ensureSshHostKey(runId, host);
   return spawnSync("tailscale", ["ssh", `runner@${host}`, remoteCmd], {
     encoding: "utf8",
     timeout: 120000,
@@ -53,23 +86,28 @@ async function main() {
   const token = cfg.fleet_agent_token;
   if (!token) throw new Error("fleet_agent_token missing");
 
-  let ips = process.argv.slice(2).filter(Boolean);
-  if (!ips.length) {
-    const state = loadState(cfg);
-    ips = (state.machines || [])
+  const state = loadState(cfg);
+  let targets = process.argv.slice(2).filter(Boolean).map((ip) => ({ ip, run_id: null }));
+  if (!targets.length) {
+    targets = (state.machines || [])
       .filter((m) => m.run_status === "in_progress" && m.tailscale_ip)
-      .map((m) => m.tailscale_ip);
+      .map((m) => ({ ip: m.tailscale_ip, run_id: m.run_id }));
+  } else {
+    targets = targets.map((ip) => {
+      const row = (state.machines || []).find((m) => m.tailscale_ip === ip);
+      return { ip, run_id: row && row.run_id };
+    });
   }
 
   const remote = dockerStartCmd(token);
   const results = [];
 
-  for (const ip of ips) {
+  for (const { ip, run_id: runId } of targets) {
     if (await health(ip, token)) {
       results.push({ ip, ok: true, method: "already-up" });
       continue;
     }
-    const ssh = tailscaleSsh(ip, remote);
+    const ssh = tailscaleSsh(ip, remote, runId);
     await new Promise((r) => setTimeout(r, 3000));
     const up = await health(ip, token);
     results.push({

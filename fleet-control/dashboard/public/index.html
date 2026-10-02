@@ -308,7 +308,7 @@
     async function refreshSummary() {
       let data;
       try {
-        const res = await fetchWithTimeout("/api/summary", {}, 25000);
+        const res = await fetchWithTimeout("/api/summary", {}, 45000);
         data = await parseApiJson(res);
       } catch (e) {
         document.getElementById("updated").textContent = "Σφάλμα: " + e.message;

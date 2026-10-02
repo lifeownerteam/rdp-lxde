@@ -3,7 +3,7 @@
 const http = require("http");
 
 const DEFAULT_AGENT_TIMEOUT_MS = 130000;
-const SUMMARY_PROBE_TIMEOUT_MS = 5000;
+const SUMMARY_PROBE_TIMEOUT_MS = 12000;
 
 function agentRequest(host, port, token, method, path, body, timeoutMs = DEFAULT_AGENT_TIMEOUT_MS) {
   return new Promise((resolve) => {
