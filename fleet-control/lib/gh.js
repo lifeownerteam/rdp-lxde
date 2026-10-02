@@ -1,6 +1,7 @@
 "use strict";
 
 const https = require("https");
+const zlib = require("zlib");
 
 function ghRequest(token, method, urlPath, body, host = "api.github.com") {
   return new Promise((resolve, reject) => {
@@ -95,13 +96,17 @@ async function downloadArtifactZip(token, repo, artifactId) {
   const loc = meta.headers.location;
   if (!loc) throw new Error("No redirect for artifact zip");
   const url = new URL(loc);
+  const blobHeaders =
+    url.hostname === "api.github.com"
+      ? { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json" }
+      : {};
   return new Promise((resolve, reject) => {
     https
       .get(
         {
           hostname: url.hostname,
           path: url.pathname + url.search,
-          headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json" },
+          headers: blobHeaders,
         },
         (res) => {
           const chunks = [];
@@ -114,10 +119,33 @@ async function downloadArtifactZip(token, repo, artifactId) {
 }
 
 function extractTailscaleIpFromZip(zipBuf) {
-  // MVP: artifact is tiny text file; search for IPv4 in zip binary
   const text = zipBuf.toString("latin1");
-  const m = text.match(/\b100\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/);
-  return m ? m[0] : null;
+  let m = text.match(/\b100\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/);
+  if (m) return m[0];
+  const idx = zipBuf.indexOf(Buffer.from([0x50, 0x4b, 0x03, 0x04]));
+  if (idx < 0) return null;
+  const flags = zipBuf.readUInt16LE(idx + 6);
+  const method = zipBuf.readUInt16LE(idx + 8);
+  let compSize = zipBuf.readUInt32LE(idx + 18);
+  const nameLen = zipBuf.readUInt16LE(idx + 26);
+  const extraLen = zipBuf.readUInt16LE(idx + 28);
+  const dataStart = idx + 30 + nameLen + extraLen;
+  let compEnd = dataStart + compSize;
+  if (compSize === 0 && (flags & 0x8)) {
+    const dd = zipBuf.indexOf(Buffer.from([0x50, 0x4b, 0x07, 0x08]), dataStart);
+    if (dd > dataStart) {
+      compEnd = dd;
+      compSize = dd - dataStart;
+    }
+  }
+  const comp = zipBuf.slice(dataStart, compEnd);
+  try {
+    const raw = method === 0 ? comp : zlib.inflateRawSync(comp);
+    m = raw.toString("utf8").match(/\b100\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/);
+    return m ? m[0] : null;
+  } catch {
+    return null;
+  }
 }
 
 async function collectIpsForRuns(token, repo, runs) {
