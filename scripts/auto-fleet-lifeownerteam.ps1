@@ -13,6 +13,7 @@ param(
   [string]$Gh = "D:\Tools\gh\bin\gh.exe",
   [string]$Repo = "lifeownerteam/rdp-lxde",
   [string]$Workflow = "rdp-alpine-openbox.yml",
+  [string]$WorkflowName = "RDP Linux Desktop (LXDE)",
   [string]$GhUser = "lifeownerteam"
 )
 
@@ -152,23 +153,29 @@ Write-Host "Polling up to $PollMinutes min for tailscale-ip artifacts…"
 $deadline = (Get-Date).AddMinutes($PollMinutes)
 $found = @{}
 while ((Get-Date) -lt $deadline) {
-  $recent = & $Gh run list --repo $Repo --workflow $Workflow --limit 12 `
+  & $Gh auth switch -u $GhUser | Out-Null
+  $ghToken = & $Gh auth token
+  $recent = & $Gh run list -R $Repo -w $WorkflowName --limit 12 `
     --json "databaseId,status,conclusion,createdAt" | ConvertFrom-Json
   foreach ($run in $recent) {
     if ($found.ContainsKey($run.databaseId)) { continue }
-    if ($run.status -ne "completed" -or $run.conclusion -ne "success") { continue }
-    $arts = & $Gh api "repos/$Repo/actions/runs/$($run.databaseId)/artifacts?per_page=20" `
-      --jq '.artifacts[] | select(.name=="tailscale-ip") | .id' 2>$null
-    if (-not $arts) { continue }
-    $artId = ($arts | Select-Object -First 1)
-    if (-not $artId) { continue }
+    $artJson = & $Gh api "repos/$Repo/actions/runs/$($run.databaseId)/artifacts?per_page=20" 2>$null |
+      ConvertFrom-Json
+    $art = ($artJson.artifacts | Where-Object { $_.name -eq "tailscale-ip" } | Select-Object -First 1)
+    if (-not $art) { continue }
     $zipPath = Join-Path $env:TEMP ("ts-ip-$($run.databaseId).zip")
+    $extractDir = Join-Path $env:TEMP ("ts-ip-$($run.databaseId)-dir")
     try {
-      & $Gh api "repos/$Repo/actions/artifacts/$artId/zip" > $zipPath 2>$null
+      $zipUri = "https://api.github.com/repos/$Repo/actions/artifacts/$($art.id)/zip"
+      Invoke-WebRequest -Uri $zipUri -Headers @{
+        Authorization            = "Bearer $ghToken"
+        Accept                   = "application/vnd.github+json"
+        "X-GitHub-Api-Version"   = "2022-11-28"
+      } -OutFile $zipPath
       if (Test-Path -LiteralPath $zipPath) {
         Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction SilentlyContinue
-        $extractDir = Join-Path $env:TEMP ("ts-ip-$($run.databaseId)-dir")
         if (Test-Path $extractDir) { Remove-Item $extractDir -Recurse -Force }
+        New-Item -ItemType Directory -Path $extractDir | Out-Null
         [System.IO.Compression.ZipFile]::ExtractToDirectory($zipPath, $extractDir)
         $ipFile = Get-ChildItem -Path $extractDir -Recurse -Filter "tailscale-ip.txt" -ErrorAction SilentlyContinue |
           Select-Object -First 1
@@ -176,7 +183,7 @@ while ((Get-Date) -lt $deadline) {
           $ip = (Get-Content -LiteralPath $ipFile.FullName -Raw).Trim()
           if ($ip -match '^\d+\.\d+\.\d+\.\d+$') {
             $found[$run.databaseId] = $ip
-            Write-Host "  $($ip):3389 (run $($run.databaseId))"
+            Write-Host "  $($ip):3389 (run $($run.databaseId) $($run.status))"
           }
         }
         Remove-Item $extractDir -Recurse -Force -ErrorAction SilentlyContinue
