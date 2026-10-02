@@ -328,6 +328,8 @@ jobs:
           echo "TCP connectivity successful!"
 
       - name: Maintain Connection
+        env:
+          FLEET_AGENT_TOKEN: ${{ secrets.FLEET_AGENT_TOKEN }}
         run: |
           echo ""
           echo "=== RDP ACCESS (Ubuntu 22.04 + LXDE / xRDP Xorg) ==="
@@ -340,6 +342,23 @@ jobs:
           echo "Fleet agent: ${TAILSCALE_IP}:8765 (if FLEET_AGENT_TOKEN secret set)"
           echo "==========================================="
           echo ""
+
+          if [ -n "${FLEET_AGENT_TOKEN:-}" ]; then
+            (
+              while true; do
+                if ! docker exec "${CONTAINER_NAME}" pgrep -f "python3 /opt/fleet-agent/server.py" >/dev/null 2>&1; then
+                  echo "[$(date -Is)] fleet-agent down — restarting in container"
+                  docker exec -d \
+                    -e FLEET_AGENT_TOKEN="${FLEET_AGENT_TOKEN}" \
+                    -e FLEET_RDP_USER="${RDP_USERNAME}" \
+                    -e FLEET_AGENT_PORT=8765 \
+                    "${CONTAINER_NAME}" \
+                    python3 /opt/fleet-agent/server.py
+                fi
+                sleep 45
+              done
+            ) &
+          fi
 
           while true; do
             echo "[$(date -Is)] RDP Active - Cancel workflow run to terminate"

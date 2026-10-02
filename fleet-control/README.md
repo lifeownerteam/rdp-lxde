@@ -133,7 +133,9 @@ Placeholder repos (`OTHER_ORG`, `YOUR_*`) και `enabled: false` **δεν** χ�
 | `exec "<cmd>"` | Parallel shell on all known IPs |
 | `firefox open\|close\|status\|js` | Marionette-based tab control |
 
-**Firefox:** Log in once via RDP so an X session exists (`DISPLAY :10`). First `firefox open` starts Marionette Firefox under user `RDP`.
+**Firefox:** Log in once via RDP so an X session exists (`DISPLAY :10`). First `firefox open` starts Marionette Firefox under user `RDP`. Agent picks `DISPLAY` from Xorg/x11 socket; Marionette startup waits up to ~45s. If Marionette fails, `/firefox/open` falls back to desktop Firefox (`exec`).
+
+**Hot-deploy agent (no GHA):** `node scripts/deploy-agent-live.js` writes `firefox_ctl.py` + `server.py` via `/exec`, then restarts the agent in a **second** request (never kill the agent in the same `/exec` that is serving the request). On the GHA host you can also `docker cp fleet-control/fleet-agent/. rdp-lxde:/opt/fleet-agent/` and `docker exec -d … python3 /opt/fleet-agent/server.py`. The workflow **Maintain** step runs a host-side watchdog that restarts the agent if it dies (new runs only).
 
 **Live VMs (profile missing dialog):** existing runs do not re-run provisioning; fix all agents in one shot:
 

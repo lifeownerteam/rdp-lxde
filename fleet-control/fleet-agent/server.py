@@ -140,8 +140,9 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 _json_response(self, 400, {"error": "url or urls required"})
                 return
+            allow_fb = body.get("allow_exec_fallback", True)
             try:
-                _json_response(self, 200, firefox_ctl.open_urls(target))
+                _json_response(self, 200, firefox_ctl.open_urls(target, allow_exec_fallback=bool(allow_fb)))
             except Exception as exc:
                 _json_response(self, 500, {"error": str(exc)})
             return
@@ -178,6 +179,10 @@ def main() -> None:
     if not TOKEN:
         sys.stderr.write("FLEET_AGENT_TOKEN is required\n")
         sys.exit(1)
+    try:
+        firefox_ctl.ensure_firefox_profiles()
+    except Exception as exc:
+        sys.stderr.write(f"firefox profile bootstrap warning: {exc}\n")
     httpd = ThreadingHTTPServer((HOST, PORT), Handler)
     sys.stderr.write(f"fleet-agent listening on {HOST}:{PORT}\n")
     httpd.serve_forever()

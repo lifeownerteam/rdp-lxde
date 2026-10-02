@@ -163,8 +163,29 @@ const server = http.createServer(async (req, res) => {
       const opts = targetOpts(body);
       const count = body.count != null ? parseInt(body.count, 10) : 1;
       const payload = { url: body.url, count: Number.isFinite(count) ? count : 1 };
-      const results = await agents.firefoxAll(cfg, state, "/firefox/open", payload, opts);
-      sendJson(res, 200, { ok: true, ...agents.packResults(results, "firefox") });
+      let results = await agents.firefoxAll(cfg, state, "/firefox/open", payload, opts);
+      let packed = agents.packResults(results, "firefox");
+      const failedIps = packed.results.filter((r) => !r.ok).map((r) => r.ip);
+      if (failedIps.length && body.url && body.exec_fallback !== false) {
+        const disp = body.display || ":10";
+        const urlEsc = String(body.url).replace(/'/g, `'\\''`);
+        const cmd = `DISPLAY=${disp} su - RDP -c '/opt/firefox/firefox -new-tab '\\''${urlEsc}'\\'' >/dev/null 2>&1 &'`;
+        const fb = await agents.execAll(cfg, state, cmd, { ips: failedIps, liveOnly: false });
+        const fbPacked = agents.packResults(fb, "exec");
+        packed = {
+          ...packed,
+          exec_fallback: fbPacked.results,
+          results: packed.results.map((r) => {
+            if (r.ok) return r;
+            const fbRow = fbPacked.results.find((x) => x.ip === r.ip);
+            if (fbRow && fbRow.ok && fbRow.body && fbRow.body.exit_code === 0) {
+              return { ...r, ok: true, fallback: "exec", exec: fbRow.body };
+            }
+            return r;
+          }),
+        };
+      }
+      sendJson(res, 200, { ok: true, ...packed });
     } catch (err) {
       sendJson(res, 500, { error: String(err.message || err) });
     }

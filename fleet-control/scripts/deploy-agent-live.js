@@ -1,0 +1,74 @@
+#!/usr/bin/env node
+"use strict";
+
+const fs = require("fs");
+const path = require("path");
+const { loadConfig } = require("../lib/config");
+const { loadState } = require("../lib/state");
+const agents = require("../lib/agents");
+
+const agentDir = path.join(__dirname, "..", "fleet-agent");
+const ffB64 = fs.readFileSync(path.join(agentDir, "firefox_ctl.py")).toString("base64");
+const svB64 = fs.readFileSync(path.join(agentDir, "server.py")).toString("base64");
+
+function shellQuote(s) {
+  return `'${String(s).replace(/'/g, `'\\''`)}'`;
+}
+
+function buildWriteCmd() {
+  return `
+python3 - <<'PY'
+import base64, pathlib
+pathlib.Path("/opt/fleet-agent/firefox_ctl.py").write_bytes(base64.b64decode("${ffB64}"))
+pathlib.Path("/opt/fleet-agent/server.py").write_bytes(base64.b64decode("${svB64}"))
+PY
+echo fleet-agent files updated
+`.trim();
+}
+
+function buildRestartCmd(token, rdpUser) {
+  const t = shellQuote(token);
+  const u = shellQuote(rdpUser || "RDP");
+  return `
+pkill -f 'python3 /opt/fleet-agent/server.py' || true
+sleep 1
+nohup env FLEET_AGENT_TOKEN=${t} FLEET_RDP_USER=${u} FLEET_AGENT_PORT=8765 python3 /opt/fleet-agent/server.py >>/tmp/fleet-agent.log 2>&1 &
+sleep 2
+curl -fsS http://127.0.0.1:8765/health
+`.trim();
+}
+
+async function main() {
+  const cfg = loadConfig();
+  if (!cfg.fleet_agent_token) {
+    throw new Error("fleet_agent_token missing (set fleet_agent_token or FLEET_AGENT_TOKEN env)");
+  }
+  const state = loadState(cfg);
+  const ips = process.argv.slice(2);
+  const opts = ips.length ? { ips, liveOnly: false } : { liveOnly: true };
+
+  const writeResults = await agents.execAll(cfg, state, buildWriteCmd(), opts);
+  const restartResults = await agents.execAll(
+    cfg,
+    state,
+    buildRestartCmd(cfg.fleet_agent_token, process.env.FLEET_RDP_USER || "RDP"),
+    opts
+  );
+
+  const writePacked = agents.packResults(writeResults, "exec");
+  const restartPacked = agents.packResults(restartResults, "exec");
+  for (const r of restartPacked.results) {
+    const w = writePacked.results.find((x) => x.ip === r.ip);
+    console.log(
+      r.ip,
+      w && w.ok ? "write-ok" : "write-fail",
+      r.ok ? "restart-ok" : "restart-fail",
+      r.body && r.body.stdout ? r.body.stdout.trim().slice(0, 80) : r.body
+    );
+  }
+}
+
+main().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});
