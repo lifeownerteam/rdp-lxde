@@ -36,6 +36,10 @@ npm run gui
 4. `.\scripts\fleet.ps1 provision 80` (ή `.\scripts\provision-80.ps1` — gh switch ανά λογαριασμό)
 5. `.\scripts\fleet.ps1 poll 80` (15–25 λεπτά συνήθως)
 
+## 8 LIVE (αν κολλήσουν παλιά runs)
+
+Ένα `:8765/health` OK δεν αρκεί για όλο το fleet: ακύρωσε dead `in_progress` (χωρίς agent) και **μία φορά** `.\scripts\fleet.ps1 provision 8` (workflow ≥ `6ab455e`). Recovery scripts: `fleet-control/scripts/restore-agent-docker-exec.js`, `deploy-agent-live.js`, `patch-agent-ip.js`.
+
 ## Καθάρισμα ουράς
 
 Ακυρώνει **όλα** τα `queued` / `in_progress` για το workflow LXDE στους ενεργούς λογαριασμούς:

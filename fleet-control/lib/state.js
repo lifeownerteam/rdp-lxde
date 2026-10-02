@@ -25,4 +25,12 @@ function upsertMachine(state, machine) {
   }
 }
 
-module.exports = { loadState, saveState, upsertMachine };
+/** Drop machine rows whose run_id is not in the current active GHA run set. */
+function pruneMachinesToActiveRuns(state, activeRunIds) {
+  const keep = new Set((activeRunIds || []).map((id) => Number(id)));
+  const before = (state.machines || []).length;
+  state.machines = (state.machines || []).filter((m) => m.run_id && keep.has(Number(m.run_id)));
+  return { before, after: state.machines.length, removed: before - state.machines.length };
+}
+
+module.exports = { loadState, saveState, upsertMachine, pruneMachinesToActiveRuns };

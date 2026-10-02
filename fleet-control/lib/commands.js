@@ -1,6 +1,6 @@
 "use strict";
 
-const { loadState, saveState, upsertMachine } = require("./state");
+const { loadState, saveState, upsertMachine, pruneMachinesToActiveRuns } = require("./state");
 const gh = require("./gh");
 const { resolveAccountToken, switchGhUserSync } = require("./gh-local");
 
@@ -346,6 +346,7 @@ async function cmdRefresh(cfg, flags, onEvent) {
     }
     throw new Error("No GitHub account with token and real repos");
   }
+  const activeRunIds = [];
   for (const acct of accts) {
     if (acct.gh_user) {
       const sw = switchGhUserSync(acct.gh_user, acct.gh_host || "github.com");
@@ -356,6 +357,9 @@ async function cmdRefresh(cfg, flags, onEvent) {
     for (const repo of acct.repos) {
       emit(`Refreshing ${repo} (${acct.name})...`);
       const runs = await gh.listWorkflowRuns(acct.token, repo, cfg.workflow_id, 50);
+      for (const run of gh.activeRuns(runs)) {
+        activeRunIds.push(run.id);
+      }
       const withIp = await gh.collectIpsForRuns(acct.token, repo, runs);
       for (const row of withIp) {
         upsertMachine(state, {
@@ -371,6 +375,10 @@ async function cmdRefresh(cfg, flags, onEvent) {
       }
       emit(`${repo}: ${withIp.length} runs with tailscale-ip artifact`);
     }
+  }
+  const pruned = pruneMachinesToActiveRuns(state, activeRunIds);
+  if (pruned.removed > 0) {
+    emit(`Pruned ${pruned.removed} stale machine row(s) (${pruned.before} → ${pruned.after}).`);
   }
   saveState(cfg, state);
   emit("Refresh complete.");
