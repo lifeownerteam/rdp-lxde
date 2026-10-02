@@ -12,7 +12,11 @@
 !scripts/auto-fleet-lifeownerteam.ps1
 !scripts/auto-fleet.ps1
 !scripts/fleet.ps1
+!scripts/fleet-watch.ps1
 !scripts/fleet-secrets.ps1
+!.cursor/
+!.cursor/automation/
+!.cursor/automation/**
 !scripts/provision-80.ps1
 !scripts/.gitignore
 !fleet-control/
@@ -25,6 +29,7 @@
 **/ngrok-token.local
 fleet-control/config.json
 fleet-control/fleet-state.json
+fleet-control/.fleet-watch-cooldown.json
 fleet-control/.tailscale-api-key
 fleet-control/_debug*.js
 fleet-control/_test*.js

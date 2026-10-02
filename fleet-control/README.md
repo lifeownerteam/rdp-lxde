@@ -128,6 +128,7 @@ Placeholder repos (`OTHER_ORG`, `YOUR_*`) και `enabled: false` **δεν** χ�
 | `provision-fleet [--total N]` | Same as `provision 80` / `--fleet` |
 | `clean-queue` | Cancel all queued/in_progress LXDE runs on enabled accounts |
 | `poll [--target N] [--minutes M]` | Repeat `refresh` until N IPs or timeout |
+| `watch [--target N] [--interval SEC] [--once] [--dry-run]` | Auto-reconnect loop: refresh, provision missing (dedupe), 10 min cooldown |
 | `refresh` | Pull Tailscale IPs from artifacts into state |
 | `status [--json]` | IPs table, queue counts, `gh` login + config account check |
 | `exec "<cmd>"` | Parallel shell on all known IPs |
@@ -135,7 +136,11 @@ Placeholder repos (`OTHER_ORG`, `YOUR_*`) και `enabled: false` **δεν** χ�
 
 **Firefox:** Log in once via RDP so an X session exists (`DISPLAY :10`). First `firefox open` starts Marionette Firefox under user `RDP`. Agent picks `DISPLAY` from Xorg/x11 socket; Marionette startup waits up to ~45s. If Marionette fails, `/firefox/open` falls back to desktop Firefox (`exec`).
 
-**Hot-deploy agent (no GHA):** `node scripts/deploy-agent-live.js` writes `firefox_ctl.py` + `server.py` via `/exec`, then restarts the agent in a **second** request (never kill the agent in the same `/exec` that is serving the request). On the GHA host you can also `docker cp fleet-control/fleet-agent/. rdp-lxde:/opt/fleet-agent/` and `docker exec -d … python3 /opt/fleet-agent/server.py`. The workflow **Maintain** step runs a host-side watchdog that restarts the agent if it dies (new runs only).
+**Hot-deploy agent (no GHA):** `node scripts/deploy-agent-live.js` writes `firefox_ctl.py` + `server.py` via `/exec`, then restarts the agent in a **second** request (never kill the agent in the same `/exec` that is serving the request). On the GHA host you can also `docker cp fleet-control/fleet-agent/. rdp-lxde:/opt/fleet-agent/` and `docker exec -d … python3 /opt/fleet-agent/server.py`.
+
+**GHA agent watchdog (per VM):** In `.github/workflows/rdp-alpine-openbox.yml`, the **Maintain Connection** step loops on the runner host: if `curl http://127.0.0.1:8765/health` fails, it `docker cp`s `fleet-control/fleet-agent` into the container and restarts `python3 /opt/fleet-agent/server.py` (45s interval). This repairs dead agents on **existing** workflow runs without re-provisioning.
+
+**Fleet auto-reconnect (operator):** `.\scripts\fleet.ps1 watch --target 8 --interval 120` on your PC refreshes GitHub/Tailscale state and dispatches only when LIVE count is below target and active runs are also below target (max one provision burst per 10 minutes). Greek quickstart: [FLEET-QUICKSTART-EL.md](./FLEET-QUICKSTART-EL.md#auto-reconnect-watch).
 
 **Live VMs (profile missing dialog):** existing runs do not re-run provisioning; fix all agents in one shot:
 

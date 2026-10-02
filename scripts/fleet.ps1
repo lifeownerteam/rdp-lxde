@@ -9,7 +9,7 @@
 #   .\scripts\fleet.ps1 gui
 param(
   [Parameter(Position = 0)]
-  [ValidateSet("setup", "secrets", "clean-queue", "provision", "poll", "status", "gui", "refresh", "help")]
+  [ValidateSet("setup", "secrets", "clean-queue", "provision", "poll", "status", "gui", "refresh", "watch", "help")]
   [string]$Command = "help",
 
   [Parameter(ValueFromRemainingArguments = $true)]
@@ -43,6 +43,8 @@ Fleet self-service (from repo root)
   .\scripts\fleet.ps1 poll [N]                 # refresh artifacts until N IPs or timeout
   .\scripts\fleet.ps1 status [-Json]           # IPs table + gh accounts check
   .\scripts\fleet.ps1 refresh                  # one-shot IP refresh
+  .\scripts\fleet.ps1 watch [--target 8] [--interval 120] [--once] [--dry-run]
+  .\scripts\fleet-watch.ps1 [-Poll]              # gh switch + watch --once (for Automations)
   .\scripts\fleet.ps1 gui                      # npm run gui (unchanged dashboard)
 
 Config: fleet-control\config.json
@@ -110,4 +112,5 @@ Tailscale API: fleet-control\.tailscale-api-key (gitignored)
   }
   "clean-queue" { Invoke-FleetNode (@("clean-queue") + $Rest) }
   "refresh" { Invoke-FleetNode (@("refresh") + $Rest) }
+  "watch" { Invoke-FleetNode (@("watch") + $Rest) }
 }

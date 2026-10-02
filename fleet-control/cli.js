@@ -9,6 +9,7 @@ const {
   cmdRefresh,
   cmdCleanQueue,
   cmdPoll,
+  cmdWatch,
 } = require("./lib/commands");
 const { buildFleetStatus, printHumanTable } = require("./lib/fleet-status");
 const agents = require("./lib/agents");
@@ -22,6 +23,7 @@ Usage:
   node cli.js clean-queue [--account NAME]
   node cli.js poll [--minutes N] [--target N] [--account NAME]
   node cli.js refresh [--account NAME]
+  node cli.js watch [--target N] [--interval SEC] [--once] [--dry-run] [--account NAME]
   node cli.js status [--json]
   node cli.js exec "<shell command>"
   node cli.js firefox open --url URL [--count N]
@@ -167,7 +169,11 @@ async function main() {
         if (ev.type === "log") console.log(ev.message);
       });
     } else if (cmd === "refresh") await runRefreshCli(cfg, flags);
-    else if (cmd === "status") await cmdStatus(cfg, flags);
+    else if (cmd === "watch") {
+      await cmdWatch(cfg, flags, (ev) => {
+        if (ev.type === "log") console.log(ev.message);
+      });
+    } else if (cmd === "status") await cmdStatus(cfg, flags);
     else if (cmd === "exec") await cmdExec(cfg, positional.slice(1).join(" ") || flags._);
     else if (cmd === "firefox") await cmdFirefox(cfg, positional[1], flags, positional.slice(2));
     else {

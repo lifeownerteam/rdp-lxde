@@ -1,7 +1,11 @@
 "use strict";
 
+const fs = require("fs");
+const path = require("path");
+
 const { loadState, saveState, upsertMachine, pruneMachinesToActiveRuns } = require("./state");
 const gh = require("./gh");
+const agents = require("./agents");
 const { resolveAccountToken, switchGhUserSync } = require("./gh-local");
 
 /** Placeholder owner/repo patterns from config.example — never dispatch these. */
@@ -347,6 +351,7 @@ async function cmdRefresh(cfg, flags, onEvent) {
     throw new Error("No GitHub account with token and real repos");
   }
   const activeRunIds = [];
+  const runsWithIpIds = [];
   for (const acct of accts) {
     if (acct.gh_user) {
       const sw = switchGhUserSync(acct.gh_user, acct.gh_host || "github.com");
@@ -362,6 +367,7 @@ async function cmdRefresh(cfg, flags, onEvent) {
       }
       const withIp = await gh.collectIpsForRuns(acct.token, repo, runs);
       for (const row of withIp) {
+        if (row.tailscale_ip) runsWithIpIds.push(row.run_id);
         upsertMachine(state, {
           account: acct.name,
           repo,
@@ -376,7 +382,7 @@ async function cmdRefresh(cfg, flags, onEvent) {
       emit(`${repo}: ${withIp.length} runs with tailscale-ip artifact`);
     }
   }
-  const pruned = pruneMachinesToActiveRuns(state, activeRunIds);
+  const pruned = pruneMachinesToActiveRuns(state, activeRunIds, runsWithIpIds);
   if (pruned.removed > 0) {
     emit(`Pruned ${pruned.removed} stale machine row(s) (${pruned.before} → ${pruned.after}).`);
   }
@@ -447,6 +453,138 @@ async function cmdPoll(cfg, flags, onEvent) {
   emit("Poll finished (time limit). Run status for details.");
 }
 
+function watchCooldownPath(cfg) {
+  return path.join(path.dirname(cfg._statePath), ".fleet-watch-cooldown.json");
+}
+
+function readWatchCooldown(cfg) {
+  const p = watchCooldownPath(cfg);
+  if (!fs.existsSync(p)) return 0;
+  try {
+    const raw = JSON.parse(fs.readFileSync(p, "utf8"));
+    const t = Date.parse(raw.last_provision_at || "");
+    return Number.isFinite(t) ? t : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function markWatchProvision(cfg) {
+  const p = watchCooldownPath(cfg);
+  const payload = { last_provision_at: new Date().toISOString() };
+  fs.writeFileSync(p, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+}
+
+async function countActiveForAccounts(cfg, accts) {
+  let total = 0;
+  for (const acct of accts) {
+    if (acct.gh_user) {
+      const sw = switchGhUserSync(acct.gh_user, acct.gh_host || "github.com");
+      if (!sw.ok) {
+        throw new Error(`gh auth switch -u ${acct.gh_user} failed: ${sw.message}`);
+      }
+    }
+    for (const repo of acct.repos) {
+      const runs = await gh.listWorkflowRuns(acct.token, repo, cfg.workflow_id, 100);
+      total += gh.countActiveRuns(runs);
+    }
+  }
+  return total;
+}
+
+async function watchMetrics(cfg, flags) {
+  const accts = targetAccounts(cfg, flags);
+  const accountNames = new Set(accts.map((a) => a.name));
+  const repos = new Set(accts.flatMap((a) => a.repos));
+  const activeTotal = await countActiveForAccounts(cfg, accts);
+
+  const state = loadState(cfg);
+  const rows = await agents.healthAll(cfg, state);
+  const scoped = rows.filter(
+    (m) =>
+      (!m.account || accountNames.has(m.account)) && (!m.repo || repos.has(m.repo))
+  );
+  const withIp = scoped.filter((m) => m.tailscale_ip);
+  const live = scoped.filter((m) => m.health && m.health.ok);
+
+  return {
+    activeTotal,
+    liveCount: live.length,
+    withIpCount: withIp.length,
+    allDown: withIp.length > 0 && live.length === 0,
+  };
+}
+
+/**
+ * Auto-reconnect: refresh each tick; provision (dedupe) only when LIVE and active runs are below target.
+ * Skips dispatch when active runs already meet target (waits for agents). Max one provision burst / 10 min.
+ */
+async function cmdWatch(cfg, flags, onEvent) {
+  const emit = (msg) => {
+    if (onEvent) onEvent({ type: "log", message: msg });
+  };
+  const target = parseInt(
+    flags.target || flags.count || cfg.machines_per_account || 8,
+    10
+  );
+  const intervalSec = parseInt(flags.interval || 120, 10);
+  const cooldownMs = parseInt(flags["provision-cooldown-min"] || "10", 10) * 60 * 1000;
+  const dryRun = !!flags["dry-run"];
+  const once = !!flags.once;
+
+  emit(
+    `Watch: target ${target} LIVE, interval ${intervalSec}s, provision cooldown ${cooldownMs / 60000} min${dryRun ? " (dry-run)" : ""}`
+  );
+
+  do {
+    const tickAt = new Date().toISOString();
+    emit(`[${tickAt}] tick — refresh…`);
+    await cmdRefresh(cfg, flags, emit);
+
+    const m = await watchMetrics(cfg, flags);
+    emit(
+      `[watch] live=${m.liveCount}/${target} active_runs=${m.activeTotal} ips=${m.withIpCount}${m.allDown ? " all_DOWN" : ""}`
+    );
+
+    if (m.liveCount >= target) {
+      emit(`[watch] OK — ${m.liveCount} LIVE (target ${target}).`);
+    } else if (m.activeTotal >= target) {
+      emit(
+        `[watch] ${m.activeTotal} active run(s) ≥ target ${target} but only ${m.liveCount} LIVE — wait (no dispatch).`
+      );
+    } else {
+      const lastProv = readWatchCooldown(cfg);
+      const cooldownLeft = Math.max(0, cooldownMs - (Date.now() - lastProv));
+      if (cooldownLeft > 0) {
+        emit(
+          `[watch] below target but provision cooldown ${Math.ceil(cooldownLeft / 1000)}s left — skip dispatch.`
+        );
+      } else if (m.activeTotal === 0 || m.allDown || m.activeTotal < target) {
+        const reason =
+          m.activeTotal === 0
+            ? "no active runs"
+            : m.allDown
+              ? "all machines DOWN"
+              : "active below target";
+        if (dryRun) {
+          emit(`[watch] dry-run: would provision toward ${target} (${reason}).`);
+        } else {
+          emit(`[watch] provision toward ${target} (${reason})…`);
+          await cmdProvision(cfg, { ...flags, count: String(target) }, emit);
+          markWatchProvision(cfg);
+        }
+      }
+    }
+
+    if (once) {
+      emit("[watch] --once: exiting after one iteration.");
+      return;
+    }
+    emit(`[watch] sleep ${intervalSec}s…`);
+    await new Promise((r) => setTimeout(r, intervalSec * 1000));
+  } while (true);
+}
+
 module.exports = {
   isPlaceholderRepo,
   fleetTargetAccounts,
@@ -458,4 +596,5 @@ module.exports = {
   cmdRefresh,
   cmdCleanQueue,
   cmdPoll,
+  cmdWatch,
 };

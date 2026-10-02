@@ -38,6 +38,7 @@ switch ($cmd) {
   "gui" { & $Wrapper gui @rest; exit $LASTEXITCODE }
   "secrets" { & $Wrapper secrets @rest; exit $LASTEXITCODE }
   "setup" { & $Wrapper setup @rest; exit $LASTEXITCODE }
+  "watch" { & $Wrapper watch @rest; exit $LASTEXITCODE }
 }
 
 $Cli = Join-Path $Root "cli.js"
