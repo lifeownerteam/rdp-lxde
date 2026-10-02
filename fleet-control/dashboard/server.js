@@ -239,6 +239,13 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (url.startsWith("/api/")) {
+    sendJson(res, 404, {
+      error: `Δεν βρέθηκε το API ${req.method} ${url}`,
+    });
+    return;
+  }
+
   let file = url === "/" ? "/index.html" : url;
   if (file === "/gui" || file === "/fleet-gui.html") file = "/index.html";
   const fp = path.join(publicDir, file);

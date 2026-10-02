@@ -124,6 +124,28 @@
   <script>
     let lastLogLen = 0;
 
+    async function parseApiJson(res) {
+      const text = await res.text();
+      if (!text) {
+        if (!res.ok) throw new Error("Σφάλμα HTTP " + res.status);
+        return {};
+      }
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        const hint =
+          /not found/i.test(text) && res.status === 404
+            ? " Ξανακίνησε το dashboard (npm run dashboard) με τον τελευταίο κώδικα."
+            : "";
+        throw new Error(
+          "Μη έγκυρη απάντηση από τον server (HTTP " + res.status + "):" + hint
+        );
+      }
+      if (!res.ok) throw new Error(data.error || "Σφάλμα HTTP " + res.status);
+      return data;
+    }
+
     function appendLogs(container, logs, reset) {
       if (reset) {
         container.textContent = "";
@@ -142,7 +164,7 @@
       const el = document.getElementById("ghStatus");
       try {
         const res = await fetch("/api/github/status");
-        const data = await res.json();
+        const data = await parseApiJson(res);
         let text = "gh: " + (data.gh_path || "?") + "\n";
         if (data.loggedIn) {
           text += "Συνδεδεμένος: " + (data.account || "github.com") + "\n";
@@ -167,7 +189,7 @@
       logEl.textContent = "";
       const tick = async () => {
         const res = await fetch(statusUrl);
-        const job = await res.json();
+        const job = await parseApiJson(res);
         appendLogs(logEl, job.logs, false);
         if (job.error) {
           logEl.textContent += "\nΣφάλμα: " + job.error;
@@ -190,7 +212,7 @@
       btn.disabled = true;
       try {
         const res = await fetch("/api/github/connect", { method: "POST" });
-        const data = await res.json();
+        const data = await parseApiJson(res);
         document.getElementById("ghStatus").textContent = data.message || "Άνοιξε το τερματικό.";
         setTimeout(loadGhStatus, 3000);
       } catch (e) {
@@ -209,7 +231,7 @@
       const sel = document.getElementById("accountSelect");
       try {
         const res = await fetch("/api/accounts");
-        const data = await res.json();
+        const data = await parseApiJson(res);
         sel.innerHTML = "";
         const list = (data.accounts || []).filter((a) => a.enabled !== false);
         const usable = list.filter((a) => a.provisionable);
@@ -266,7 +288,13 @@
 
     async function refreshSummary() {
       const res = await fetch("/api/summary");
-      const data = await res.json();
+      let data;
+      try {
+        data = await parseApiJson(res);
+      } catch (e) {
+        document.getElementById("updated").textContent = "Σφάλμα: " + e.message;
+        return;
+      }
       document.getElementById("updated").textContent =
         "Ενημερώθηκε " + (data.updated_at || "") + " — αυτόματη ανανέωση 10s";
       const tbody = document.getElementById("rows");

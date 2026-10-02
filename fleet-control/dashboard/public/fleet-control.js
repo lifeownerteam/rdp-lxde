@@ -30,9 +30,31 @@
     }
   }
 
+  async function parseApiJson(res) {
+    const text = await res.text();
+    if (!text) {
+      if (!res.ok) throw new Error("Σφάλμα HTTP " + res.status);
+      return {};
+    }
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      const hint =
+        /not found/i.test(text) && res.status === 404
+          ? " Ξανακίνησε το dashboard (npm run dashboard) με τον τελευταίο κώδικα."
+          : "";
+      throw new Error(
+        "Μη έγκυρη απάντηση από τον server (HTTP " + res.status + "):" + hint
+      );
+    }
+    if (!res.ok) throw new Error(data.error || "Σφάλμα HTTP " + res.status);
+    return data;
+  }
+
   async function liveIpsFromSummary() {
     const res = await fetch("/api/summary");
-    const data = await res.json();
+    const data = await parseApiJson(res);
     return (data.machines || []).filter((m) => m.live).map((m) => m.ip);
   }
 
@@ -52,9 +74,7 @@
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body || {}),
     });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || res.statusText);
-    return data;
+    return parseApiJson(res);
   }
 
   function init() {
@@ -102,8 +122,7 @@
       btn.disabled = true;
       try {
         const res = await fetch("/api/firefox/status");
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || res.statusText);
+        const data = await parseApiJson(res);
         fillResultTable(ffStatus, data.results);
       } catch (e) {
         alert(e.message);
