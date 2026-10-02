@@ -142,32 +142,35 @@ jobs:
         run: |
           set -euo pipefail
 
-          docker exec "${CONTAINER_NAME}" bash -euc "
-            id ${RDP_USERNAME} >/dev/null 2>&1 || useradd -m -s /bin/bash ${RDP_USERNAME}
-            echo '${RDP_USERNAME}:${RDP_PASSWORD}' | chpasswd
-            usermod -aG sudo ${RDP_USERNAME}
-            usermod -aG ssl-cert ${RDP_USERNAME} 2>/dev/null || true
-            printf '%s\n' '#!/bin/sh' 'exec startlxde' > /home/${RDP_USERNAME}/.xsession
-            chmod +x /home/${RDP_USERNAME}/.xsession
-            chown -R ${RDP_USERNAME}:${RDP_USERNAME} /home/${RDP_USERNAME}
+          docker exec \
+            -e RDP_USERNAME="${RDP_USERNAME}" \
+            -e RDP_PASSWORD="${RDP_PASSWORD}" \
+            "${CONTAINER_NAME}" bash -euc '
+            id "${RDP_USERNAME}" >/dev/null 2>&1 || useradd -m -s /bin/bash "${RDP_USERNAME}"
+            echo "${RDP_USERNAME}:${RDP_PASSWORD}" | chpasswd
+            usermod -aG sudo "${RDP_USERNAME}"
+            usermod -aG ssl-cert "${RDP_USERNAME}" 2>/dev/null || true
+            printf "%s\n" "#!/bin/sh" "exec startlxde" > "/home/${RDP_USERNAME}/.xsession"
+            chmod +x "/home/${RDP_USERNAME}/.xsession"
+            chown -R "${RDP_USERNAME}:${RDP_USERNAME}" "/home/${RDP_USERNAME}"
 
             FF=/opt/firefox/firefox
-            FF_HOME=/home/${RDP_USERNAME}
-            FF_FLEET=\"\${FF_HOME}/.fleet-firefox-profile\"
-            FF_MOZ=\"\${FF_HOME}/.mozilla/firefox\"
-            FF_DESKTOP=\"\${FF_MOZ}/default\"
-            install -d -o ${RDP_USERNAME} -g ${RDP_USERNAME} -m 700 \"\${FF_MOZ}\" \"\${FF_FLEET}\"
-            if ! su - ${RDP_USERNAME} -c \"test -f \\\"\${FF_FLEET}/times.json\\\"\"; then
-              su - ${RDP_USERNAME} -c \"\\\${FF} -CreateProfile \\\"fleet \\\${FF_FLEET}\\\"\"
+            FF_HOME="/home/${RDP_USERNAME}"
+            FF_FLEET="${FF_HOME}/.fleet-firefox-profile"
+            FF_MOZ="${FF_HOME}/.mozilla/firefox"
+            FF_DESKTOP="${FF_MOZ}/default"
+            install -d -o "${RDP_USERNAME}" -g "${RDP_USERNAME}" -m 700 "${FF_MOZ}" "${FF_FLEET}"
+            if ! su - "${RDP_USERNAME}" -c "test -f \"${FF_FLEET}/times.json\""; then
+              su - "${RDP_USERNAME}" -c "\"${FF}\" -CreateProfile \"fleet ${FF_FLEET}\""
             fi
-            if ! su - ${RDP_USERNAME} -c \"test -f \\\"\${FF_MOZ}/profiles.ini\\\"\"; then
-              su - ${RDP_USERNAME} -c \"\\\${FF} -CreateProfile \\\"default \\\${FF_DESKTOP}\\\"\"
-            elif ! su - ${RDP_USERNAME} -c \"test -d \\\"\${FF_DESKTOP}\\\"\"; then
-              su - ${RDP_USERNAME} -c \"mv \\\"\${FF_MOZ}/profiles.ini\\\" \\\"\${FF_MOZ}/profiles.ini.broken-\\\$(date +%s)\\\" 2>/dev/null || true\"
-              su - ${RDP_USERNAME} -c \"\\\${FF} -CreateProfile \\\"default \\\${FF_DESKTOP}\\\"\"
+            if ! su - "${RDP_USERNAME}" -c "test -f \"${FF_MOZ}/profiles.ini\""; then
+              su - "${RDP_USERNAME}" -c "\"${FF}\" -CreateProfile \"default ${FF_DESKTOP}\""
+            elif ! su - "${RDP_USERNAME}" -c "test -d \"${FF_DESKTOP}\""; then
+              su - "${RDP_USERNAME}" -c "mv \"${FF_MOZ}/profiles.ini\" \"${FF_MOZ}/profiles.ini.broken-$(date +%s)\" 2>/dev/null || true"
+              su - "${RDP_USERNAME}" -c "\"${FF}\" -CreateProfile \"default ${FF_DESKTOP}\""
             fi
-            chown -R ${RDP_USERNAME}:${RDP_USERNAME} \"\${FF_HOME}\"
-          "
+            chown -R "${RDP_USERNAME}:${RDP_USERNAME}" "${FF_HOME}"
+          '
 
           echo "RDP_CREDS=User: ${RDP_USERNAME} | Password: ${RDP_PASSWORD}" >> "$GITHUB_ENV"
 
