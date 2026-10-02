@@ -112,9 +112,46 @@ function getGhTokenSync() {
   }
 }
 
+/**
+ * Switch active gh CLI user (required before token when multiple accounts are logged in).
+ */
+function switchGhUserSync(ghUser, host = "github.com") {
+  if (!ghUser || typeof ghUser !== "string") {
+    return { ok: true, skipped: true };
+  }
+  const gh = resolveGh();
+  try {
+    execFileSync(gh, ["auth", "switch", "-u", ghUser.trim(), "-h", host], {
+      encoding: "utf8",
+      windowsHide: true,
+      timeout: 15000,
+    });
+    return { ok: true, gh_user: ghUser.trim() };
+  } catch (err) {
+    const detail = [err.stderr, err.stdout, err.message].filter(Boolean).join("\n").trim();
+    return { ok: false, gh_user: ghUser.trim(), message: detail || "gh auth switch failed" };
+  }
+}
+
+/**
+ * Token for a config account: explicit token / token_env, else gh auth switch to gh_user + active token.
+ */
+function resolveAccountToken(acct) {
+  if (!acct) return null;
+  if (acct.token) return acct.token;
+  const host = acct.gh_host || "github.com";
+  if (acct.gh_user) {
+    const sw = switchGhUserSync(acct.gh_user, host);
+    if (!sw.ok) return null;
+  }
+  return getGhTokenSync();
+}
+
 module.exports = {
   resolveGh,
   spawnGhAuthLogin,
   getGitHubAuthStatus,
   getGhTokenSync,
+  switchGhUserSync,
+  resolveAccountToken,
 };

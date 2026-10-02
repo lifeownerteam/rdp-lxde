@@ -2,7 +2,7 @@
 
 const { loadState, saveState, upsertMachine } = require("./state");
 const gh = require("./gh");
-const { getGhTokenSync } = require("./gh-local");
+const { resolveAccountToken, switchGhUserSync } = require("./gh-local");
 
 /** Placeholder owner/repo patterns from config.example — never dispatch these. */
 function isPlaceholderRepo(repo) {
@@ -19,9 +19,9 @@ function filterRepos(repos) {
   return (repos || []).filter((r) => !isPlaceholderRepo(r));
 }
 
-function applyGhToken(acct, ghToken) {
-  if (acct.token) return acct;
-  if (ghToken) return { ...acct, token: ghToken };
+function applyGhToken(acct) {
+  const token = resolveAccountToken(acct);
+  if (token) return { ...acct, token };
   return acct;
 }
 
@@ -29,7 +29,6 @@ function applyGhToken(acct, ghToken) {
  * All enabled accounts with real repos and token (multi-account fleet).
  */
 function fleetTargetAccounts(cfg, flags = {}) {
-  const ghToken = getGhTokenSync();
   let list = (cfg.github_accounts || []).filter((a) => a.enabled !== false);
 
   if (flags.account) {
@@ -38,7 +37,7 @@ function fleetTargetAccounts(cfg, flags = {}) {
 
   return list
     .map((a) => {
-      const withToken = applyGhToken(a, ghToken);
+      const withToken = applyGhToken(a);
       return { ...withToken, repos: filterRepos(withToken.repos) };
     })
     .filter((a) => a.token && a.repos.length > 0);
@@ -49,7 +48,6 @@ function fleetTargetAccounts(cfg, flags = {}) {
  * Default (no flags.account): primary only — never all accounts.
  */
 function targetAccounts(cfg, flags = {}) {
-  const ghToken = getGhTokenSync();
   let list = (cfg.github_accounts || []).filter((a) => a.enabled !== false);
 
   if (flags.account) {
@@ -61,7 +59,7 @@ function targetAccounts(cfg, flags = {}) {
 
   return list
     .map((a) => {
-      const withToken = applyGhToken(a, ghToken);
+      const withToken = applyGhToken(a);
       return { ...withToken, repos: filterRepos(withToken.repos) };
     })
     .filter((a) => a.token && a.repos.length > 0);
@@ -76,10 +74,13 @@ function explainMissingAccount(cfg, accountName) {
   if (named.enabled === false) {
     return `Account "${accountName}" is disabled (enabled: false) in config.json`;
   }
-  const ghToken = getGhTokenSync();
-  const withToken = applyGhToken(named, ghToken);
+  const withToken = applyGhToken(named);
   if (!withToken.token) {
-    return `Account "${accountName}" has no token — run «Σύνδεση GitHub» / gh auth login or set ${named.token_env || "token_env"}`;
+    const ghUser = named.gh_user ? ` (gh_user: ${named.gh_user})` : "";
+    const switchHint = named.gh_user
+      ? ` Run: gh auth switch -u ${named.gh_user}, or «Σύνδεση GitHub».`
+      : " Run «Σύνδεση GitHub» / gh auth login or set token_env.";
+    return `Account "${accountName}" has no token${ghUser}.${switchHint} Or set ${named.token_env || "token_env"}.`;
   }
   const repos = filterRepos(named.repos);
   if (!repos.length) {
@@ -90,9 +91,8 @@ function explainMissingAccount(cfg, accountName) {
 
 /** Options for dashboard account dropdown */
 function listAccountOptions(cfg) {
-  const ghToken = getGhTokenSync();
   return (cfg.github_accounts || []).map((a) => {
-    const withToken = applyGhToken(a, ghToken);
+    const withToken = applyGhToken(a);
     const repos = filterRepos(withToken.repos);
     let reason = null;
     if (a.enabled === false) reason = "disabled in config";
@@ -158,6 +158,13 @@ async function cmdProvision(cfg, flags, onEvent) {
 
   let dispatched = 0;
   for (const acct of accts) {
+    if (acct.gh_user) {
+      const sw = switchGhUserSync(acct.gh_user, acct.gh_host || "github.com");
+      if (!sw.ok) {
+        throw new Error(`gh auth switch -u ${acct.gh_user} failed: ${sw.message}`);
+      }
+      emit(`Using GitHub account ${acct.gh_user} (${acct.name})`);
+    }
     for (const repo of acct.repos) {
       const perRepoTarget = parseInt(
         flags.count || acct.machines_per_account || cfg.machines_per_account || target,
@@ -282,8 +289,18 @@ async function cmdProvisionFleet(cfg, flags, onEvent) {
   }
 
   let dispatched = 0;
+  let lastGhUser = null;
   for (const row of plan) {
     if (dispatchBudget <= 0) break;
+    const ghUser = row.acct.gh_user;
+    if (ghUser && ghUser !== lastGhUser) {
+      const sw = switchGhUserSync(ghUser, row.acct.gh_host || "github.com");
+      if (!sw.ok) {
+        throw new Error(`gh auth switch -u ${ghUser} failed: ${sw.message}`);
+      }
+      lastGhUser = ghUser;
+      emit(`Using GitHub account ${ghUser} (${row.acct.name})`);
+    }
     const n = Math.min(row.toDispatch, dispatchBudget);
     if (n <= 0) {
       emit(`${row.repo} (${row.acct.name}): ${row.activeCount}/${row.cap} active — skip`);
@@ -330,6 +347,12 @@ async function cmdRefresh(cfg, flags, onEvent) {
     throw new Error("No GitHub account with token and real repos");
   }
   for (const acct of accts) {
+    if (acct.gh_user) {
+      const sw = switchGhUserSync(acct.gh_user, acct.gh_host || "github.com");
+      if (!sw.ok) {
+        throw new Error(`gh auth switch -u ${acct.gh_user} failed: ${sw.message}`);
+      }
+    }
     for (const repo of acct.repos) {
       emit(`Refreshing ${repo} (${acct.name})...`);
       const runs = await gh.listWorkflowRuns(acct.token, repo, cfg.workflow_id, 50);
@@ -364,6 +387,12 @@ async function cmdCleanQueue(cfg, flags, onEvent) {
 
   let cancelled = 0;
   for (const acct of accts) {
+    if (acct.gh_user) {
+      const sw = switchGhUserSync(acct.gh_user, acct.gh_host || "github.com");
+      if (!sw.ok) {
+        throw new Error(`gh auth switch -u ${acct.gh_user} failed: ${sw.message}`);
+      }
+    }
     for (const repo of acct.repos) {
       const runs = await gh.listWorkflowRuns(acct.token, repo, cfg.workflow_id, 100);
       const active = gh.activeRuns(runs);
