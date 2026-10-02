@@ -15,6 +15,7 @@ async function buildFleetStatus(cfg) {
   const state = loadState(cfg);
   const ghAuth = await getGitHubAuthStatus();
   const accountOptions = listAccountOptions(cfg);
+  const primaryCfg = (cfg.github_accounts || []).find((a) => a.name === "primary");
   const accts = fleetTargetAccounts(cfg, {});
 
   const queue = [];
@@ -71,6 +72,7 @@ async function buildFleetStatus(cfg) {
       token_available: !!getGhTokenSync(),
     },
     config_accounts: accountOptions,
+    primary_gh_user: primaryCfg && primaryCfg.gh_user,
     workflow_id: cfg.workflow_id,
     queue,
     summary: {
@@ -88,6 +90,16 @@ function printHumanTable(report) {
   console.log(
     `  logged_in: ${report.gh.logged_in ? "yes" : "no"}  active: ${report.gh.active_account || "-"}  token: ${report.gh.token_available ? "ok" : "missing"}`
   );
+  if (
+    report.gh.logged_in &&
+    report.primary_gh_user &&
+    report.gh.active_account &&
+    report.gh.active_account !== report.primary_gh_user
+  ) {
+    console.log(
+      `  WARNING: active gh user is ${report.gh.active_account}, not ${report.primary_gh_user} — API uses gh auth token (gh auth switch -u ${report.primary_gh_user})`
+    );
+  }
   console.log("");
   console.log("=== Config accounts ===");
   for (const a of report.config_accounts) {
