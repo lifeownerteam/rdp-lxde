@@ -26,6 +26,8 @@ cd fleet-control
 npm run gui
 ```
 
+**Terminal 100%:** Στο panel (8780) πάτα **Ανανέωση**, έλεγξε τις LIVE IPs, Terminal → `echo FLEET_OK` (ή `.\scripts\fleet.ps1 exec "echo FLEET_OK"`).
+
 ## 80 μηχανήματα (10 λογαριασμοί × 8)
 
 1. Στο `fleet-control/config.json` ενεργοποίησε τους λογαριασμούς που θες (`enabled: true`, πραγματικά `owner/rdp-lxde`).

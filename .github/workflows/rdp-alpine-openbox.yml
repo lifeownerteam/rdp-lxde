@@ -349,8 +349,17 @@ jobs:
           if [ -n "${FLEET_AGENT_TOKEN:-}" ]; then
             (
               while true; do
-                if ! docker exec "${CONTAINER_NAME}" pgrep -f "python3 /opt/fleet-agent/server.py" >/dev/null 2>&1; then
-                  echo "[$(date -Is)] fleet-agent down — restarting in container"
+                agent_ok=false
+                if curl -fsS --max-time 3 "http://127.0.0.1:8765/health" 2>/dev/null | grep -q '"ok"'; then
+                  agent_ok=true
+                fi
+                if [ "$agent_ok" = false ]; then
+                  echo "[$(date -Is)] fleet-agent unhealthy — repair (docker cp + restart)"
+                  if [ -d "${GITHUB_WORKSPACE}/fleet-control/fleet-agent" ]; then
+                    docker cp "${GITHUB_WORKSPACE}/fleet-control/fleet-agent/." "${CONTAINER_NAME}:/opt/fleet-agent/" || true
+                  fi
+                  docker exec "${CONTAINER_NAME}" pkill -f "python3 /opt/fleet-agent/server.py" 2>/dev/null || true
+                  sleep 1
                   docker exec -d \
                     -e FLEET_AGENT_TOKEN="${FLEET_AGENT_TOKEN}" \
                     -e FLEET_RDP_USER="${RDP_USERNAME}" \

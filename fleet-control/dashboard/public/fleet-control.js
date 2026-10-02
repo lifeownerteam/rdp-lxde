@@ -165,10 +165,20 @@
       const btn = document.getElementById("btnExecRun");
       btn.disabled = true;
       try {
-        const data = await postJson("/api/exec", { command: execCmd.value });
+        const cmd = (execCmd.value || "").trim();
+        if (!cmd) {
+          alert("Γράψε εντολή shell.");
+          return;
+        }
+        const data = await postJson("/api/exec", { command: cmd });
+        if (!data.results || !data.results.length) {
+          alert("Καμία LIVE μηχανή — κάνε Ανανέωση ή περίμενε provision.");
+          fillResultTable(execResults, []);
+          return;
+        }
         fillResultTable(execResults, data.results);
       } catch (e) {
-        alert(e.message);
+        alert(e.message || String(e));
       } finally {
         btn.disabled = false;
       }

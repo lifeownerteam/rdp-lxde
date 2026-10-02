@@ -86,7 +86,7 @@ async function cmdStatus(cfg, flags) {
 async function cmdExec(cfg, command) {
   if (!command) throw new Error("exec requires a command string");
   const state = loadState(cfg);
-  const results = await agents.execAll(cfg, state, command);
+  const results = await agents.execAll(cfg, state, command, { liveOnly: true });
   for (const r of results) {
     const ex = r.exec || {};
     console.log(`\n=== ${r.tailscale_ip} (exit ${ex.body && ex.body.exit_code}) ===`);

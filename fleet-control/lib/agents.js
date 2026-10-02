@@ -104,18 +104,28 @@ async function mapLiveMachines(cfg, state, fn, opts = {}) {
 
 async function healthAll(cfg, state, opts = {}) {
   const timeoutMs = opts.timeoutMs ?? DEFAULT_AGENT_TIMEOUT_MS;
-  return mapLiveMachines(cfg, state, opts, async (host, port, token) => {
-    const r = await agentRequest(host, port, token, "GET", "/health", null, timeoutMs);
-    return { health: r };
-  });
+  return mapLiveMachines(
+    cfg,
+    state,
+    async (host, port, token) => {
+      const r = await agentRequest(host, port, token, "GET", "/health", null, timeoutMs);
+      return { health: r };
+    },
+    opts
+  );
 }
 
 async function metricsAll(cfg, state, opts = {}) {
   const timeoutMs = opts.timeoutMs ?? DEFAULT_AGENT_TIMEOUT_MS;
-  return mapLiveMachines(cfg, state, opts, async (host, port, token) => {
-    const r = await agentRequest(host, port, token, "GET", "/metrics", null, timeoutMs);
-    return { metrics: r };
-  });
+  return mapLiveMachines(
+    cfg,
+    state,
+    async (host, port, token) => {
+      const r = await agentRequest(host, port, token, "GET", "/metrics", null, timeoutMs);
+      return { metrics: r };
+    },
+    opts
+  );
 }
 
 async function summaryAll(cfg, state) {

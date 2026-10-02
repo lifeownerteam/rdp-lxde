@@ -29,12 +29,10 @@ echo fleet-agent files updated
 function buildRestartCmd(token, rdpUser) {
   const t = shellQuote(token);
   const u = shellQuote(rdpUser || "RDP");
+  // Deferred restart: return before pkill so this /exec request is not self-killed.
   return `
-pkill -f 'python3 /opt/fleet-agent/server.py' || true
-sleep 1
-nohup env FLEET_AGENT_TOKEN=${t} FLEET_RDP_USER=${u} FLEET_AGENT_PORT=8765 python3 /opt/fleet-agent/server.py >>/tmp/fleet-agent.log 2>&1 &
-sleep 2
-curl -fsS http://127.0.0.1:8765/health
+nohup bash -c 'sleep 1; pkill -f '"'"'python3 /opt/fleet-agent/server.py'"'"' || true; sleep 1; exec env FLEET_AGENT_TOKEN=${t} FLEET_RDP_USER=${u} FLEET_AGENT_PORT=8765 python3 /opt/fleet-agent/server.py >>/tmp/fleet-agent.log 2>&1' >/dev/null 2>&1 &
+echo deferred-restart-scheduled
 `.trim();
 }
 

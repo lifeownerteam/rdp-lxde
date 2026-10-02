@@ -27,11 +27,8 @@ PY`;
   const w = await agents.agentRequest(ip, 8765, token, "POST", "/exec", { command: writeCmd });
   console.log("write", w.ok, w.body);
   const restartCmd = `
-pkill -f 'python3 /opt/fleet-agent/server.py' || true
-sleep 1
-nohup env FLEET_AGENT_TOKEN='${token.replace(/'/g, `'\\''`)}' FLEET_RDP_USER=RDP python3 /opt/fleet-agent/server.py >>/tmp/fleet-agent.log 2>&1 &
-sleep 2
-curl -fsS http://127.0.0.1:8765/health
+nohup bash -c 'sleep 1; pkill -f '"'"'python3 /opt/fleet-agent/server.py'"'"' || true; sleep 1; exec env FLEET_AGENT_TOKEN='"'"'${token.replace(/'/g, `'\\''`)}'"'"' FLEET_RDP_USER=RDP FLEET_AGENT_PORT=8765 python3 /opt/fleet-agent/server.py >>/tmp/fleet-agent.log 2>&1' >/dev/null 2>&1 &
+echo deferred-restart-scheduled
 `.trim();
   const r = await agents.agentRequest(ip, 8765, token, "POST", "/exec", { command: restartCmd });
   console.log("restart", r.ok, r.body);
