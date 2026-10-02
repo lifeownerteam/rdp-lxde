@@ -23,17 +23,18 @@ Orchestrate many **RDP Linux Desktop (LXDE)** GitHub Actions runners over Tailsc
 ## Quick start
 
 1. Copy `config.example.json` → `config.json` (never commit).
-2. On each target repo, set secrets (same as RDP today):
+2. **Tailscale API (μία φορά):** αποθήκευσε το `tskey-api-…` σε `fleet-control/.tailscale-api-key` (μία γραμμή, gitignored) — μετά `..\scripts\auto-fleet-lifeownerteam.ps1 -Poll`.
+3. On each target repo, set secrets (same as RDP today):
    - `TAILSCALE_AUTH_KEY`
    - `FLEET_AGENT_TOKEN` — same long random string as in your local `config.json` / env
-3. Set GitHub tokens via env (recommended):
+4. Set GitHub tokens via env (recommended):
 
    ```powershell
    $env:GH_TOKEN_PRIMARY = "ghp_..."
    $env:FLEET_AGENT_TOKEN = "your-shared-agent-token"
    ```
 
-4. From `fleet-control/`:
+5. From `fleet-control/`:
 
    ```powershell
    .\fleet.ps1 setup-account -Username YOUR_GITHUB_USER

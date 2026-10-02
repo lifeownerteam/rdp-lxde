@@ -9,6 +9,7 @@
 !scripts/set-tailscale-github-secret.ps1
 !scripts/set-fleet-agent-github-secret.ps1
 !scripts/setup-account.ps1
+!scripts/auto-fleet-lifeownerteam.ps1
 !scripts/.gitignore
 !fleet-control/
 !fleet-control/**
@@ -20,3 +21,4 @@
 **/ngrok-token.local
 fleet-control/config.json
 fleet-control/fleet-state.json
+fleet-control/.tailscale-api-key

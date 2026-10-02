@@ -1,0 +1,3 @@
+# Copy this file to .tailscale-api-key (same folder) — one line only, no quotes.
+# Get tskey-api-… from https://login.tailscale.com/admin/settings/keys
+tskey-api-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
