@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import concurrent.futures
 import json
 import os
 import subprocess
@@ -22,6 +23,20 @@ HOST = os.environ.get("FLEET_AGENT_HOST", "0.0.0.0")
 PORT = int(os.environ.get("FLEET_AGENT_PORT", "8765"))
 TOKEN = os.environ.get("FLEET_AGENT_TOKEN", "")
 MAX_EXEC_SECONDS = int(os.environ.get("FLEET_EXEC_TIMEOUT", "120"))
+MARIONETTE_OP_TIMEOUT = int(os.environ.get("FLEET_MARIONETTE_OP_TIMEOUT", "90"))
+
+
+def _marionette_call(fn, *args, **kwargs):
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        fut = pool.submit(fn, *args, **kwargs)
+        try:
+            return fut.result(timeout=MARIONETTE_OP_TIMEOUT)
+        except concurrent.futures.TimeoutError as exc:
+            try:
+                firefox_ctl._kill_fleet_marionette_firefox()
+            except Exception:
+                pass
+            raise RuntimeError("marionette operation timed out") from exc
 
 
 def _json_response(handler: BaseHTTPRequestHandler, code: int, body: dict[str, Any]) -> None:
@@ -142,8 +157,22 @@ class Handler(BaseHTTPRequestHandler):
                 return
             allow_fb = body.get("allow_exec_fallback", True)
             try:
-                _json_response(self, 200, firefox_ctl.open_urls(target, allow_exec_fallback=bool(allow_fb)))
+                _json_response(
+                    self,
+                    200,
+                    _marionette_call(
+                        firefox_ctl.open_urls,
+                        target,
+                        allow_exec_fallback=bool(allow_fb),
+                    ),
+                )
             except Exception as exc:
+                if allow_fb and target:
+                    try:
+                        _json_response(self, 200, firefox_ctl.exec_open_urls(target))
+                        return
+                    except Exception:
+                        pass
                 _json_response(self, 500, {"error": str(exc)})
             return
 
@@ -152,7 +181,8 @@ class Handler(BaseHTTPRequestHandler):
                 _json_response(
                     self,
                     200,
-                    firefox_ctl.close_tabs(
+                    _marionette_call(
+                        firefox_ctl.close_tabs,
                         all_tabs=bool(body.get("all", True)),
                         keep=int(body.get("keep", 1)),
                     ),
@@ -167,7 +197,7 @@ class Handler(BaseHTTPRequestHandler):
                 _json_response(self, 400, {"error": "script required"})
                 return
             try:
-                _json_response(self, 200, firefox_ctl.run_js(str(script)))
+                _json_response(self, 200, _marionette_call(firefox_ctl.run_js, str(script)))
             except Exception as exc:
                 _json_response(self, 500, {"error": str(exc)})
             return

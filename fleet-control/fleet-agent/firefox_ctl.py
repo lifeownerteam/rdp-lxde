@@ -6,14 +6,17 @@ import os
 import re
 import shlex
 import subprocess
+import threading
 import time
 from typing import Any
+
+_MARIONETTE_LOCK = threading.Lock()
 
 RDP_USER = os.environ.get("FLEET_RDP_USER", "RDP")
 MARIONETTE_PORT = int(os.environ.get("FLEET_MARIONETTE_PORT", "2828"))
 MARIONETTE_PROBE_TIMEOUT = float(os.environ.get("FLEET_MARIONETTE_PROBE_TIMEOUT", "10"))
 MARIONETTE_SESSION_TIMEOUT = float(os.environ.get("FLEET_MARIONETTE_SESSION_TIMEOUT", "30"))
-MARIONETTE_START_WAIT_SEC = float(os.environ.get("FLEET_MARIONETTE_START_WAIT", "45"))
+MARIONETTE_START_WAIT_SEC = float(os.environ.get("FLEET_MARIONETTE_START_WAIT", "30"))
 FLEET_PROFILE = f"/home/{RDP_USER}/.fleet-firefox-profile"
 DESKTOP_PROFILE = f"/home/{RDP_USER}/.mozilla/firefox/default"
 FF_BIN = "/opt/firefox/firefox"
@@ -49,8 +52,7 @@ def ensure_firefox_profiles() -> None:
     )
     def _create_profile(label: str, path: str) -> None:
         disp = rdp_display()
-        num = disp.split(":")[1].split(".")[0]
-        if os.path.exists(f"/tmp/.X11-unix/X{num}"):
+        if disp:
             prefix = f"DISPLAY={shlex.quote(disp)} "
         else:
             prefix = "xvfb-run -a "
@@ -101,19 +103,26 @@ def rdp_display() -> str:
         if sock:
             return sock
 
-    return os.environ.get("DISPLAY", ":10")
+    env_disp = os.environ.get("DISPLAY")
+    if env_disp and _x11_socket_display(env_disp.split(":")[1].split(".")[0]):
+        return env_disp
+    return None
+
+
+def _marionette_port_open() -> bool:
+    import socket
+
+    try:
+        with socket.create_connection(("127.0.0.1", MARIONETTE_PORT), timeout=1):
+            return True
+    except OSError:
+        return False
 
 
 def _marionette_probe(timeout: float = MARIONETTE_PROBE_TIMEOUT) -> bool:
-    try:
-        from marionette_driver.marionette import Marionette
-
-        m = Marionette(host="127.0.0.1", port=MARIONETTE_PORT, socket_timeout=timeout)
-        m.start_session()
-        m.delete_session()
-        return True
-    except Exception:
-        return False
+    """True when Marionette TCP port accepts connections (no WebDriver session probe)."""
+    _ = timeout
+    return _marionette_port_open()
 
 
 def _kill_fleet_marionette_firefox() -> None:
@@ -128,13 +137,22 @@ def _kill_fleet_marionette_firefox() -> None:
     time.sleep(0.5)
 
 
-def _launch_marionette_firefox(display: str) -> None:
+def _launch_marionette_firefox(display: str | None) -> None:
     profile_q = shlex.quote(FLEET_PROFILE)
-    cmd = (
-        f"export DISPLAY={shlex.quote(display)} HOME=/home/{RDP_USER}; "
-        f"nohup {FF_BIN} -no-remote -marionette -marionette-port {MARIONETTE_PORT} "
-        f"-profile {profile_q} about:blank >>/tmp/fleet-firefox.log 2>&1 &"
+    ff_cmd = (
+        f"{FF_BIN} -no-remote -marionette -marionette-port {MARIONETTE_PORT} "
+        f"-profile {profile_q} about:blank"
     )
+    if display:
+        cmd = (
+            f"export DISPLAY={shlex.quote(display)} HOME=/home/{RDP_USER}; "
+            f"nohup {ff_cmd} >>/tmp/fleet-firefox.log 2>&1 &"
+        )
+    else:
+        cmd = (
+            f"export HOME=/home/{RDP_USER}; "
+            f"nohup xvfb-run -a {ff_cmd} >>/tmp/fleet-firefox.log 2>&1 &"
+        )
     _run_as_rdp(cmd, check=False)
 
 
@@ -145,7 +163,8 @@ def _ensure_marionette() -> None:
     if _marionette_probe():
         return
 
-    _kill_fleet_marionette_firefox()
+    if _marionette_port_open():
+        _kill_fleet_marionette_firefox()
     _launch_marionette_firefox(display)
 
     deadline = time.monotonic() + MARIONETTE_START_WAIT_SEC
@@ -160,23 +179,58 @@ def _ensure_marionette() -> None:
             tail = "".join(fh.readlines()[-20:])
     except OSError:
         pass
+    disp_note = display if display else "xvfb-run (no RDP X session)"
     raise RuntimeError(
-        f"Could not start Marionette Firefox (DISPLAY={display}, port={MARIONETTE_PORT}); "
-        f"log in via RDP first or check /tmp/fleet-firefox.log. Log tail: {tail[:500]}"
+        f"Could not start Marionette Firefox ({disp_note}, port={MARIONETTE_PORT}); "
+        f"log in via RDP for :10 desktop or check /tmp/fleet-firefox.log. Log tail: {tail[:500]}"
     )
+
+
+def _collect_tabs(m) -> dict[str, Any]:
+    handles = m.window_handles
+    titles = []
+    urls = []
+    for h in handles:
+        m.switch_to_window(h)
+        titles.append(m.title)
+        urls.append(m.get_url())
+    return {"count": len(handles), "titles": titles, "urls": urls}
 
 
 def _session():
     from marionette_driver.marionette import Marionette
 
-    _ensure_marionette()
-    m = Marionette(
-        host="127.0.0.1",
-        port=MARIONETTE_PORT,
-        socket_timeout=MARIONETTE_SESSION_TIMEOUT,
-    )
-    m.start_session()
-    return m
+    with _MARIONETTE_LOCK:
+        _ensure_marionette()
+        m = Marionette(
+            host="127.0.0.1",
+            port=MARIONETTE_PORT,
+            socket_timeout=MARIONETTE_SESSION_TIMEOUT,
+        )
+        try:
+            m.start_session()
+        except Exception as exc:
+            if "active session" in str(exc).lower():
+                _kill_fleet_marionette_firefox()
+                _launch_marionette_firefox(rdp_display())
+                deadline = time.monotonic() + MARIONETTE_START_WAIT_SEC
+                while time.monotonic() < deadline:
+                    time.sleep(0.5)
+                    if _marionette_probe():
+                        break
+                else:
+                    raise
+                m = Marionette(
+                    host="127.0.0.1",
+                    port=MARIONETTE_PORT,
+                    socket_timeout=MARIONETTE_SESSION_TIMEOUT,
+                )
+                m.start_session()
+            else:
+                raise
+        m.timeouts.page_load = 60
+        m.timeouts.script = 30
+        return m
 
 
 def exec_open_urls(urls: list[str]) -> dict[str, Any]:
@@ -187,86 +241,86 @@ def exec_open_urls(urls: list[str]) -> dict[str, Any]:
     opened = 0
     for i, url in enumerate(urls):
         flag = "-new-tab" if i else "-new-window"
-        cmd = (
-            f"export DISPLAY={shlex.quote(display)}; "
-            f"{FF_BIN} {flag} {shlex.quote(url)} >/dev/null 2>&1 &"
-        )
+        if display:
+            cmd = (
+                f"export DISPLAY={shlex.quote(display)}; "
+                f"{FF_BIN} {flag} {shlex.quote(url)} >/dev/null 2>&1 &"
+            )
+        else:
+            cmd = f"xvfb-run -a {FF_BIN} {flag} {shlex.quote(url)} >/dev/null 2>&1 &"
         _run_as_rdp(cmd, check=False)
         opened += 1
     time.sleep(0.8)
-    tabs = tab_status()
-    return {"opened": opened, "fallback": "exec", "tabs": tabs}
+    return {"opened": opened, "fallback": "exec", "tabs": {"count": None, "note": "exec launch (see RDP desktop if logged in)"}}
 
 
 def open_urls(urls: list[str], *, allow_exec_fallback: bool = True) -> dict[str, Any]:
     if not urls:
         return {"opened": 0, "tabs": tab_status()}
-    try:
-        m = _session()
-    except Exception as exc:
-        if allow_exec_fallback:
-            out = exec_open_urls(urls)
-            out["marionette_error"] = str(exc)
-            return out
-        raise
-    try:
-        for i, url in enumerate(urls):
-            if i == 0:
-                m.navigate(url)
-            else:
-                m.execute_script(f'window.open("{url}", "_blank");')
-        time.sleep(0.5)
-        return {"opened": len(urls), "tabs": tab_status()}
-    finally:
-        m.delete_session()
+    with _MARIONETTE_LOCK:
+        try:
+            m = _session()
+        except Exception as exc:
+            if allow_exec_fallback:
+                out = exec_open_urls(urls)
+                out["marionette_error"] = str(exc)
+                return out
+            raise
+        try:
+            for i, url in enumerate(urls):
+                if i == 0:
+                    m.navigate(url)
+                else:
+                    m.execute_script(f'window.open("{url}", "_blank");')
+            time.sleep(0.5)
+            tabs = _collect_tabs(m)
+            return {"opened": len(urls), "tabs": tabs}
+        finally:
+            m.delete_session()
 
 
 def close_tabs(all_tabs: bool = True, keep: int = 1) -> dict[str, Any]:
-    m = _session()
-    try:
-        handles = m.window_handles
-        if all_tabs and len(handles) <= 1:
-            return {"closed": 0, "tabs": tab_status()}
-        closed = 0
-        if all_tabs:
-            for h in handles[keep:]:
-                m.switch_to_window(h)
-                m.close()
-                closed += 1
-        else:
-            if len(handles) > 1:
-                m.close()
-                closed = 1
-        return {"closed": closed, "tabs": tab_status()}
-    finally:
-        m.delete_session()
+    with _MARIONETTE_LOCK:
+        m = _session()
+        try:
+            handles = m.window_handles
+            if all_tabs and len(handles) <= 1:
+                return {"closed": 0, "tabs": _collect_tabs(m)}
+            closed = 0
+            if all_tabs:
+                for h in handles[keep:]:
+                    m.switch_to_window(h)
+                    m.close()
+                    closed += 1
+            else:
+                if len(handles) > 1:
+                    m.close()
+                    closed = 1
+            return {"closed": closed, "tabs": _collect_tabs(m)}
+        finally:
+            m.delete_session()
 
 
 def tab_status() -> dict[str, Any]:
     try:
-        m = _session()
-        try:
-            handles = m.window_handles
-            titles = []
-            urls = []
-            for h in handles:
-                m.switch_to_window(h)
-                titles.append(m.title)
-                urls.append(m.get_url())
-            return {"count": len(handles), "titles": titles, "urls": urls}
-        finally:
-            m.delete_session()
+        with _MARIONETTE_LOCK:
+            m = _session()
+            try:
+                return _collect_tabs(m)
+            finally:
+                m.delete_session()
     except Exception as exc:
         return {"count": 0, "error": str(exc), "titles": [], "urls": []}
 
 
 def run_js(script: str) -> dict[str, Any]:
-    m = _session()
-    try:
-        results = []
-        for h in m.window_handles:
-            m.switch_to_window(h)
-            results.append({"url": m.get_url(), "result": m.execute_script(script)})
-        return {"tabs": len(results), "results": results}
-    finally:
-        m.delete_session()
+    with _MARIONETTE_LOCK:
+        m = _session()
+        try:
+            results = []
+            for h in m.window_handles:
+                m.switch_to_window(h)
+                results.append({"url": m.get_url(), "result": m.execute_script(script)})
+            return {"tabs": len(results), "results": results}
+        finally:
+            m.delete_session()

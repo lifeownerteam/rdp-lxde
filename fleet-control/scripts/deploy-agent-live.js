@@ -45,15 +45,35 @@ async function main() {
   }
   const state = loadState(cfg);
   const ips = process.argv.slice(2);
-  const opts = ips.length ? { ips, liveOnly: false } : { liveOnly: true };
 
-  const writeResults = await agents.execAll(cfg, state, buildWriteCmd(), opts);
-  const restartResults = await agents.execAll(
-    cfg,
-    state,
-    buildRestartCmd(cfg.fleet_agent_token, process.env.FLEET_RDP_USER || "RDP"),
-    opts
-  );
+  let writeResults;
+  let restartResults;
+  const port = cfg.agent_port || 8765;
+  const restartCmd = buildRestartCmd(cfg.fleet_agent_token, process.env.FLEET_RDP_USER || "RDP");
+
+  if (ips.length) {
+    writeResults = await Promise.all(
+      ips.map(async (ip) => ({
+        tailscale_ip: ip,
+        exec: await agents.agentRequest(ip, port, cfg.fleet_agent_token, "POST", "/exec", {
+          command: buildWriteCmd(),
+        }),
+      }))
+    );
+    await new Promise((r) => setTimeout(r, 1500));
+    restartResults = await Promise.all(
+      ips.map(async (ip) => ({
+        tailscale_ip: ip,
+        exec: await agents.agentRequest(ip, port, cfg.fleet_agent_token, "POST", "/exec", {
+          command: restartCmd,
+        }),
+      }))
+    );
+  } else {
+    writeResults = await agents.execAll(cfg, state, buildWriteCmd(), { liveOnly: true });
+    await new Promise((r) => setTimeout(r, 1500));
+    restartResults = await agents.execAll(cfg, state, restartCmd, { liveOnly: true });
+  }
 
   const writePacked = agents.packResults(writeResults, "exec");
   const restartPacked = agents.packResults(restartResults, "exec");
