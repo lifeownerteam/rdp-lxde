@@ -138,12 +138,14 @@ function switchGhUserSync(ghUser, host = "github.com") {
  */
 function resolveAccountToken(acct) {
   if (!acct) return null;
-  if (acct.token) return acct.token;
   const host = acct.gh_host || "github.com";
   if (acct.gh_user) {
     const sw = switchGhUserSync(acct.gh_user, host);
     if (!sw.ok) return null;
+    const ghTok = getGhTokenSync();
+    if (ghTok) return ghTok;
   }
+  if (acct.token) return acct.token;
   return getGhTokenSync();
 }
 

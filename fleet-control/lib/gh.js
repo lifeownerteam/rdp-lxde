@@ -1,7 +1,16 @@
 "use strict";
 
+const fs = require("fs");
+const path = require("path");
+const os = require("os");
+const { execFile } = require("child_process");
+const { promisify } = require("util");
 const https = require("https");
 const zlib = require("zlib");
+const { resolveGh } = require("./gh-local");
+
+const execFileAsync = promisify(execFile);
+const TAILSCALE_IP_RE = /\b100\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/;
 
 function ghRequest(token, method, urlPath, body, host = "api.github.com") {
   return new Promise((resolve, reject) => {
@@ -118,6 +127,47 @@ async function downloadArtifactZip(token, repo, artifactId) {
   });
 }
 
+function parseTailscaleIpText(text) {
+  const m = (text || "").match(TAILSCALE_IP_RE);
+  return m ? m[0] : null;
+}
+
+function listFilesRecursive(dir) {
+  const out = [];
+  for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+    const p = path.join(dir, ent.name);
+    if (ent.isDirectory()) out.push(...listFilesRecursive(p));
+    else out.push(p);
+  }
+  return out;
+}
+
+/** Prefer gh CLI — matches GitHub artifact layout on Windows (avoids brittle zip parsing). */
+async function downloadTailscaleIpViaGh(repo, runId) {
+  const gh = resolveGh();
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "fleet-tailscale-ip-"));
+  try {
+    await execFileAsync(
+      gh,
+      ["run", "download", String(runId), "-R", repo, "-n", "tailscale-ip", "-D", tmp],
+      { encoding: "utf8", timeout: 120000, windowsHide: true, maxBuffer: 4 * 1024 * 1024 }
+    );
+    for (const file of listFilesRecursive(tmp)) {
+      const ip = parseTailscaleIpText(fs.readFileSync(file, "utf8"));
+      if (ip) return ip;
+    }
+    return null;
+  } catch {
+    return null;
+  } finally {
+    try {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
 function extractTailscaleIpFromZip(zipBuf) {
   const text = zipBuf.toString("latin1");
   let m = text.match(/\b100\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/);
@@ -159,8 +209,11 @@ async function collectIpsForRuns(token, repo, runs) {
     );
     const art = (json.artifacts || []).find((a) => a.name === "tailscale-ip");
     if (!art) continue;
-    const zip = await downloadArtifactZip(token, repo, art.id);
-    const ip = extractTailscaleIpFromZip(zip);
+    let ip = await downloadTailscaleIpViaGh(repo, run.id);
+    if (!ip) {
+      const zip = await downloadArtifactZip(token, repo, art.id);
+      ip = extractTailscaleIpFromZip(zip);
+    }
     if (ip) {
       out.push({ run_id: run.id, tailscale_ip: ip, status: run.status, conclusion: run.conclusion });
     }
