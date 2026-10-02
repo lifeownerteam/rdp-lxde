@@ -42,6 +42,10 @@ npm run gui
 .\scripts\fleet.ps1 clean-queue
 ```
 
+## Git push (`origin` → madclip)
+
+Αν αποτύχει το `git push origin main`: `gh auth switch --user madclipmad1-stack` και `gh auth setup-git`, μετά ξαναδοκίμασε push.
+
 ## Τι δεν μπαίνει ποτέ στο git
 
 - `fleet-control/config.json`
