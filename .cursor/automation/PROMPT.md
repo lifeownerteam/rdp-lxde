@@ -7,7 +7,7 @@ Run on the machine where GitHub CLI is already logged in and fleet local files e
 From the repository root, in PowerShell:
 
 1. `gh auth switch -u lifeownerteam` (confirm success; do not print tokens)
-2. `.\scripts\fleet-watch.ps1` — this reads status, provisions with dedupe when `active==0` or (`LIVE<8` and `active<8`), refreshes fleet-state, and may auto-poll if LIVE is still short
+2. `.\scripts\fleet-watch.ps1` — one `watch --once` tick: refresh, then provision (dedupe, 10 min cooldown) when `active==0` or LIVE and active runs are both below 8
 3. If fleet-watch did not poll and LIVE is still below 8, run once: `.\scripts\fleet-watch.ps1 -Poll -PollMinutes 15`
 4. Run `.\scripts\fleet.ps1 status` and summarize results
 
