@@ -135,6 +135,14 @@ Placeholder repos (`OTHER_ORG`, `YOUR_*`) και `enabled: false` **δεν** χ�
 
 **Firefox:** Log in once via RDP so an X session exists (`DISPLAY :10`). First `firefox open` starts Marionette Firefox under user `RDP`.
 
+**Live VMs (profile missing dialog):** existing runs do not re-run provisioning; fix all agents in one shot:
+
+```powershell
+.\fleet.ps1 exec "install -d -o RDP -g RDP -m 700 /home/RDP/.mozilla/firefox /home/RDP/.fleet-firefox-profile; su - RDP -c '/opt/firefox/firefox -CreateProfile \"fleet /home/RDP/.fleet-firefox-profile\"' 2>/dev/null || true; test -f /home/RDP/.mozilla/firefox/profiles.ini || su - RDP -c '/opt/firefox/firefox -CreateProfile \"default /home/RDP/.mozilla/firefox/default\"'; chown -R RDP:RDP /home/RDP"
+```
+
+Then close any Firefox error dialog and launch Firefox again (desktop or `firefox open` from the panel).
+
 ## Agent API (port 8765)
 
 | Method | Path | Auth | Body |

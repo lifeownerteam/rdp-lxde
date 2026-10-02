@@ -9,6 +9,49 @@ from typing import Any
 
 RDP_USER = os.environ.get("FLEET_RDP_USER", "RDP")
 MARIONETTE_PORT = int(os.environ.get("FLEET_MARIONETTE_PORT", "2828"))
+FLEET_PROFILE = f"/home/{RDP_USER}/.fleet-firefox-profile"
+DESKTOP_PROFILE = f"/home/{RDP_USER}/.mozilla/firefox/default"
+FF_BIN = "/opt/firefox/firefox"
+
+
+def _run_as_rdp(command: str, *, check: bool = False) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["su", "-", RDP_USER, "-c", command],
+        check=check,
+        capture_output=True,
+        text=True,
+    )
+
+
+def ensure_firefox_profiles() -> None:
+    """Writable Marionette + default desktop profiles under the RDP user home."""
+    home = f"/home/{RDP_USER}"
+    moz_dir = f"{home}/.mozilla/firefox"
+    subprocess.run(
+        [
+            "install",
+            "-d",
+            "-o",
+            RDP_USER,
+            "-g",
+            RDP_USER,
+            "-m",
+            "700",
+            moz_dir,
+            FLEET_PROFILE,
+        ],
+        check=True,
+    )
+    if not os.path.isfile(f"{FLEET_PROFILE}/times.json"):
+        _run_as_rdp(f'{FF_BIN} -CreateProfile "fleet {FLEET_PROFILE}"', check=False)
+    profiles_ini = f"{moz_dir}/profiles.ini"
+    if not os.path.isfile(profiles_ini):
+        _run_as_rdp(f'{FF_BIN} -CreateProfile "default {DESKTOP_PROFILE}"', check=False)
+    elif not os.path.isdir(DESKTOP_PROFILE):
+        broken = f"{moz_dir}/profiles.ini.broken-{int(time.time())}"
+        os.rename(profiles_ini, broken)
+        _run_as_rdp(f'{FF_BIN} -CreateProfile "default {DESKTOP_PROFILE}"', check=False)
+    subprocess.run(["chown", "-R", f"{RDP_USER}:{RDP_USER}", home], check=False)
 
 
 def _rdp_display() -> str:
@@ -19,6 +62,7 @@ def _rdp_display() -> str:
 
 
 def _ensure_marionette() -> None:
+    ensure_firefox_profiles()
     env = os.environ.copy()
     env["DISPLAY"] = _rdp_display()
     env["HOME"] = f"/home/{RDP_USER}"
@@ -38,9 +82,9 @@ def _ensure_marionette() -> None:
             "-",
             RDP_USER,
             "-c",
-            f"DISPLAY={env['DISPLAY']} nohup /opt/firefox/firefox "
+            f"DISPLAY={env['DISPLAY']} nohup {FF_BIN} "
             f"-marionette -marionette-port {MARIONETTE_PORT} "
-            f"-profile /home/{RDP_USER}/.fleet-firefox-profile "
+            f"-profile {FLEET_PROFILE} "
             f"about:blank >/tmp/fleet-firefox.log 2>&1 &",
         ],
         check=False,
