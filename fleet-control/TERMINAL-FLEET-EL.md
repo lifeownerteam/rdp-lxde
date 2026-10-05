@@ -63,14 +63,13 @@
    "workflow_id": "terminal-fleet-alpine.yml",
    "workflow_name": "Terminal Fleet (Alpine SSH)"
    ```
-3. Secrets στο repo: `FLEET_AGENT_TOKEN`, και **ένα από** `TAILSCALE_AUTH_KEY` ή (για δοκιμή χωρίς TS) άφησε κενό το Tailscale για CF quick tunnel.
-4. Προαιρετικά: `TERMINAL_SSH_PASSWORD` secret (αλλιώς άλλαξε το default στο workflow env — **μην** κάνεις commit πραγματικού password).
-5. `gh auth switch -u lifeownerteam`
-6. `.\scripts\fleet.ps1 clean-queue`
-7. `.\scripts\fleet.ps1 provision 8`
-8. `.\scripts\fleet.ps1 poll 8`
-9. `node fleet-control/cli.js cluster health`
-10. `node fleet-control/cli.js cluster exec "uname -a"`
+3. Secrets στο repo: `.\scripts\fleet.ps1 setup` ή `secrets` θέτουν `TAILSCALE_AUTH_KEY`, `FLEET_AGENT_TOKEN`, `TERMINAL_SSH_PASSWORD` (default `agkalitsa` όπως RDP · ή env `TERMINAL_SSH_PASSWORD` / prompt στο setup).
+4. `gh auth switch -u lifeownerteam`
+5. `.\scripts\fleet.ps1 clean-queue`
+6. `.\scripts\fleet.ps1 provision 8`
+7. `.\scripts\fleet.ps1 poll 8`
+8. `node fleet-control/cli.js cluster health`
+9. `node fleet-control/cli.js cluster exec "uname -a"`
 
 ## Επόμενα βήματα (κώδικας)
 

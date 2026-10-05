@@ -131,14 +131,24 @@ foreach ($acct in $enabled) {
       Write-Host "  TAILSCALE_AUTH_KEY: set"
     }
 
-    if ($SkipAgentToken) { continue }
-    if (Test-GhRepoSecret -TargetRepo $repo -SecretName "FLEET_AGENT_TOKEN") {
-      Write-Host "  FLEET_AGENT_TOKEN: already set - skip"
-    } elseif ($agentToken) {
-      Set-GhRepoSecretFromValue -Name "FLEET_AGENT_TOKEN" -Value $agentToken -TargetRepo $repo
-      Write-Host "  FLEET_AGENT_TOKEN: set"
+    if (-not $SkipAgentToken) {
+      if (Test-GhRepoSecret -TargetRepo $repo -SecretName "FLEET_AGENT_TOKEN") {
+        Write-Host "  FLEET_AGENT_TOKEN: already set - skip"
+      } elseif ($agentToken) {
+        Set-GhRepoSecretFromValue -Name "FLEET_AGENT_TOKEN" -Value $agentToken -TargetRepo $repo
+        Write-Host "  FLEET_AGENT_TOKEN: set"
+      } else {
+        Write-Warning "  FLEET_AGENT_TOKEN: not set locally - use env FLEET_AGENT_TOKEN or setup-account"
+      }
+    }
+
+    if (Test-GhRepoSecret -TargetRepo $repo -SecretName "TERMINAL_SSH_PASSWORD") {
+      Write-Host "  TERMINAL_SSH_PASSWORD: already set - skip"
     } else {
-      Write-Warning "  FLEET_AGENT_TOKEN: not set locally - use env FLEET_AGENT_TOKEN or setup-account"
+      $sshPw = [Environment]::GetEnvironmentVariable("TERMINAL_SSH_PASSWORD")
+      if (-not $sshPw) { $sshPw = "agkalitsa" }
+      Set-GhRepoSecretFromValue -Name "TERMINAL_SSH_PASSWORD" -Value $sshPw -TargetRepo $repo
+      Write-Host "  TERMINAL_SSH_PASSWORD: set"
     }
   }
 }

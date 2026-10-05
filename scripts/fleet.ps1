@@ -37,7 +37,7 @@ switch ($Command) {
 Fleet self-service (from repo root)
 
   .\scripts\fleet.ps1 setup -Username USER     # gh login + repo + local config (scripts\setup-account.ps1)
-  .\scripts\fleet.ps1 secrets                  # TAILSCALE_AUTH_KEY + FLEET_AGENT_TOKEN on enabled repos
+  .\scripts\fleet.ps1 secrets                  # TAILSCALE_AUTH_KEY + FLEET_AGENT_TOKEN + TERMINAL_SSH_PASSWORD
   .\scripts\fleet.ps1 clean-queue              # cancel queued/in_progress LXDE runs
   .\scripts\fleet.ps1 provision [8|80|N]       # dedupe dispatch toward target (80 = multi-account fleet)
   .\scripts\fleet.ps1 poll [N]                 # refresh artifacts until N IPs or timeout

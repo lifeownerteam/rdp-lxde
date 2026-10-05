@@ -128,6 +128,12 @@ if ($agentToken.Length -lt 16) { throw "FLEET_AGENT_TOKEN too short or empty." }
 Set-GhRepoSecretFromValue -Name "TAILSCALE_AUTH_KEY" -Value $tsKey -Repo $RepoFull
 Set-GhRepoSecretFromValue -Name "FLEET_AGENT_TOKEN" -Value $agentToken -Repo $RepoFull
 
+Write-Host "TERMINAL_SSH_PASSWORD for terminal-fleet-alpine.yml (Enter = agkalitsa, same as RDP workflows)."
+$sshPlain = Read-Host
+if (-not $sshPlain) { $sshPlain = "agkalitsa" }
+if ($sshPlain.Length -lt 4) { throw "TERMINAL_SSH_PASSWORD too short or empty." }
+Set-GhRepoSecretFromValue -Name "TERMINAL_SSH_PASSWORD" -Value $sshPlain -Repo $RepoFull
+
 if (-not (Test-Path -LiteralPath $ExampleConfig)) {
   throw "Missing $ExampleConfig"
 }
@@ -146,7 +152,7 @@ if (-not $primary) {
     gh_host              = "github.com"
     repos                = @($RepoFull)
     machines_per_account = 8
-    secrets_note         = "Repo needs TAILSCALE_AUTH_KEY and FLEET_AGENT_TOKEN"
+    secrets_note         = "Repo needs TAILSCALE_AUTH_KEY, FLEET_AGENT_TOKEN, TERMINAL_SSH_PASSWORD"
   }
   $cfg.github_accounts = @($primary) + @($cfg.github_accounts)
 }
