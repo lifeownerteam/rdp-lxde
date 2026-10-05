@@ -213,8 +213,15 @@ async function main() {
   const cfg = loadConfig();
   try {
     if (cmd === "provision") {
-      const n = positional[1];
-      if (n && !String(n).startsWith("-")) flags.count = n;
+      if (flags.count === undefined || flags.count === true) {
+        for (let i = positional.length - 1; i >= 1; i--) {
+          const v = parseInt(String(positional[i]), 10);
+          if (!Number.isNaN(v)) {
+            flags.count = String(v);
+            break;
+          }
+        }
+      }
       await runProvisionCli(cfg, flags);
     } else if (cmd === "provision-fleet") await runProvisionFleetCli(cfg, flags);
     else if (cmd === "clean-queue") {

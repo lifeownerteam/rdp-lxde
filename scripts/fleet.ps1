@@ -79,7 +79,11 @@ Tailscale API: fleet-control\.tailscale-api-key (gitignored)
   }
   "provision" {
     $target = $null
-    if ($Rest.Count -gt 0 -and $Rest[0] -notmatch '^-') { $target = $Rest[0] }
+    $restFlags = @()
+    foreach ($a in $Rest) {
+      if ($null -eq $target -and $a -match '^\d+$') { $target = $a }
+      else { $restFlags += $a }
+    }
     if ($target -eq "80") {
       $p80 = Join-Path $RepoRoot "scripts\provision-80.ps1"
       if (Test-Path -LiteralPath $p80) {
@@ -90,12 +94,8 @@ Tailscale API: fleet-control\.tailscale-api-key (gitignored)
       }
     }
     $nodeArgs = @("provision")
-    if ($target) {
-      $nodeArgs += $target
-      if ($Rest.Count -gt 1) { $nodeArgs += $Rest[1..($Rest.Count - 1)] }
-    } else {
-      $nodeArgs += $Rest
-    }
+    if ($target) { $nodeArgs += @("--count", $target) }
+    $nodeArgs += $restFlags
     Invoke-FleetNode $nodeArgs
   }
   "poll" {
