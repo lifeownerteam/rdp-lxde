@@ -1,6 +1,6 @@
 # Alpine terminal-only fleet node: OpenSSH + fleet-agent (8765). No xRDP / desktop.
 # Reachability: Tailscale on runner host (default, fleet-control compatible) OR optional Cloudflare quick tunnel to :8765.
-# Connect: TAILSCALE_IP:22 (SSH) and/or agent http://TAILSCALE_IP:8765
+# Connect: TAILSCALE_IP:2222 (SSH) and/or agent http://TAILSCALE_IP:8765
 
 name: Terminal Fleet (Alpine SSH)
 
@@ -9,7 +9,7 @@ on:
 
 env:
   SSH_USERNAME: fleet
-  SSH_PORT: "22"
+  SSH_PORT: "2222"
   CONTAINER_NAME: terminal-fleet
   DESKTOP_IMAGE: alpine:3.20
 
@@ -45,7 +45,7 @@ jobs:
             sed -i "s/#PasswordAuthentication.*/PasswordAuthentication yes/" /etc/ssh/sshd_config
             printf "%s\n" "PermitEmptyPasswords no" >> /etc/ssh/sshd_config
             /usr/sbin/sshd
-            ss -tlnp | grep ":22 "
+            nc -z 127.0.0.1 22
           '
 
       - name: Create SSH user
@@ -73,13 +73,13 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "${FLEET_AGENT_TOKEN:-}" ]; then
-            echo "FLEET_AGENT_TOKEN secret missing — SSH only (no remote exec API)."
+            echo "FLEET_AGENT_TOKEN secret missing - SSH only (no remote exec API)."
             exit 0
           fi
           test -f fleet-control/fleet-agent/server.py
           docker cp fleet-control/fleet-agent "${CONTAINER_NAME}:/opt/fleet-agent"
           docker exec "${CONTAINER_NAME}" sh -euc '
-            pip3 install --no-cache-dir -r /opt/fleet-agent/requirements.txt
+            pip3 install --no-cache-dir --break-system-packages -r /opt/fleet-agent/requirements.txt
           '
           docker exec -d \
             -e FLEET_AGENT_TOKEN="${FLEET_AGENT_TOKEN}" \
@@ -91,50 +91,52 @@ jobs:
           docker exec "${CONTAINER_NAME}" sh -euc 'curl -fsS http://127.0.0.1:8765/health | grep -q ok'
           echo "Fleet agent listening on :8765"
 
-      - name: Install Tailscale (optional)
-        if: ${{ secrets.TAILSCALE_AUTH_KEY != '' }}
-        run: curl -fsSL https://tailscale.com/install.sh | sh
-
-      - name: Tailscale up
-        if: ${{ secrets.TAILSCALE_AUTH_KEY != '' }}
+      - name: Tailscale or Cloudflare reachability
+        env:
+          TAILSCALE_AUTH_KEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
+          FLEET_AGENT_TOKEN: ${{ secrets.FLEET_AGENT_TOKEN }}
         run: |
           set -euo pipefail
-          sudo tailscale up \
-            --authkey="${{ secrets.TAILSCALE_AUTH_KEY }}" \
-            --hostname="gh-terminal-${GITHUB_RUN_ID}"
-          ts_ip=""
-          retries=0
-          while [ -z "$ts_ip" ] && [ "$retries" -lt 12 ]; do
-            ts_ip="$(tailscale ip -4 2>/dev/null || true)"
-            [ -n "$ts_ip" ] || { sleep 5; retries=$((retries + 1)); }
-          done
-          test -n "$ts_ip"
-          echo "TAILSCALE_IP=$ts_ip" >> "$GITHUB_ENV"
-          printf "mode=tailscale\nip=%s\nagent_port=8765\nssh_port=%s\n" "$ts_ip" "${SSH_PORT}" > fleet-connect.txt
-          echo "$ts_ip" > tailscale-ip.txt
-
-      - name: Cloudflare quick tunnel (no Tailscale)
-        if: ${{ secrets.TAILSCALE_AUTH_KEY == '' && secrets.FLEET_AGENT_TOKEN != '' }}
-        run: |
-          set -euo pipefail
-          curl -fsSL -o /tmp/cloudflared.deb \
-            https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
-          sudo dpkg -i /tmp/cloudflared.deb
-          cloudflared tunnel --url "http://127.0.0.1:8765" > /tmp/cf-tunnel.log 2>&1 &
-          url=""
-          for _ in $(seq 1 30); do
-            url="$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' /tmp/cf-tunnel.log | head -n1 || true)"
-            [ -n "$url" ] && break
-            sleep 2
-          done
-          if [ -z "$url" ]; then
-            echo "Cloudflare quick tunnel URL not found; log:"
-            tail -n 40 /tmp/cf-tunnel.log || true
-            exit 1
+          if [ -n "${TAILSCALE_AUTH_KEY:-}" ]; then
+            curl -fsSL https://tailscale.com/install.sh | sh
+            sudo tailscale up \
+              --authkey="${TAILSCALE_AUTH_KEY}" \
+              --hostname="gh-terminal-${GITHUB_RUN_ID}"
+            ts_ip=""
+            retries=0
+            while [ -z "$ts_ip" ] && [ "$retries" -lt 12 ]; do
+              ts_ip="$(tailscale ip -4 2>/dev/null || true)"
+              [ -n "$ts_ip" ] || { sleep 5; retries=$((retries + 1)); }
+            done
+            test -n "$ts_ip"
+            echo "TAILSCALE_IP=$ts_ip" >> "$GITHUB_ENV"
+            printf "mode=tailscale\nip=%s\nagent_port=8765\nssh_port=%s\n" "$ts_ip" "${SSH_PORT}" > fleet-connect.txt
+            echo "$ts_ip" > tailscale-ip.txt
+            exit 0
           fi
-          echo "CF_TUNNEL_URL=$url" >> "$GITHUB_ENV"
-          printf "mode=cloudflare_quick\nurl=%s\nagent_port=8765\nnote=ephemeral trycloudflare URL\n" "$url" > fleet-connect.txt
-          echo "n/a" > tailscale-ip.txt
+          if [ -n "${FLEET_AGENT_TOKEN:-}" ]; then
+            curl -fsSL -o /tmp/cloudflared.deb \
+              https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+            sudo dpkg -i /tmp/cloudflared.deb
+            cloudflared tunnel --url "http://127.0.0.1:8765" > /tmp/cf-tunnel.log 2>&1 &
+            url=""
+            for _ in $(seq 1 30); do
+              url="$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' /tmp/cf-tunnel.log | head -n1 || true)"
+              [ -n "$url" ] && break
+              sleep 2
+            done
+            if [ -z "$url" ]; then
+              echo "Cloudflare quick tunnel URL not found; log:"
+              tail -n 40 /tmp/cf-tunnel.log || true
+              exit 1
+            fi
+            echo "CF_TUNNEL_URL=$url" >> "$GITHUB_ENV"
+            printf "mode=cloudflare_quick\nurl=%s\nagent_port=8765\nnote=ephemeral trycloudflare URL\n" "$url" > fleet-connect.txt
+            echo "n/a" > tailscale-ip.txt
+            exit 0
+          fi
+          echo "Need TAILSCALE_AUTH_KEY and/or FLEET_AGENT_TOKEN (for Cloudflare quick tunnel fallback)."
+          exit 1
 
       - name: Require reachability mode
         run: |
@@ -194,7 +196,7 @@ jobs:
             (
               while true; do
                 if ! curl -fsS --max-time 3 "http://127.0.0.1:8765/health" 2>/dev/null | grep -q '"ok"'; then
-                  echo "[$(date -Is)] fleet-agent unhealthy — restart"
+                  echo "[$(date -Is)] fleet-agent unhealthy - restart"
                   docker exec "${CONTAINER_NAME}" pkill -f "python3 /opt/fleet-agent/server.py" 2>/dev/null || true
                   sleep 1
                   docker exec -d \
