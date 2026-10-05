@@ -13,7 +13,7 @@ param(
   [string]$Command = "help",
 
   [Parameter(ValueFromRemainingArguments = $true)]
-  [string[]]$Rest
+  [string[]]$Rest = @()
 )
 
 $ErrorActionPreference = "Stop"
@@ -64,6 +64,7 @@ Tailscale API: fleet-control\.tailscale-api-key (gitignored)
   }
   "secrets" {
     $sec = Join-Path $RepoRoot "scripts\fleet-secrets.ps1"
+    if (-not (Test-Path -LiteralPath $sec)) { Write-Error "Missing $sec"; exit 1 }
     & $sec @Rest
     exit $LASTEXITCODE
   }

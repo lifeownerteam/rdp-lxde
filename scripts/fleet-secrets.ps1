@@ -6,9 +6,11 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+if (-not $Gh) { $Gh = "D:\Tools\gh\bin\gh.exe" }
 if (-not (Test-Path -LiteralPath $Gh)) { $Gh = "gh" }
 
 $RepoRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
+if (-not $RepoRoot -and $PSScriptRoot) { $RepoRoot = Split-Path -Parent $PSScriptRoot }
 $FleetDir = Join-Path $RepoRoot "fleet-control"
 $ConfigPath = Join-Path $FleetDir "config.json"
 $KeyFile = Join-Path $FleetDir ".tailscale-api-key"
