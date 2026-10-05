@@ -1,0 +1,215 @@
+# Alpine terminal-only fleet node: OpenSSH + fleet-agent (8765). No xRDP / desktop.
+# Reachability: Tailscale on runner host (default, fleet-control compatible) OR optional Cloudflare quick tunnel to :8765.
+# Connect: TAILSCALE_IP:22 (SSH) and/or agent http://TAILSCALE_IP:8765
+
+name: Terminal Fleet (Alpine SSH)
+
+on:
+  workflow_dispatch:
+
+env:
+  SSH_USERNAME: fleet
+  SSH_PORT: "22"
+  CONTAINER_NAME: terminal-fleet
+  DESKTOP_IMAGE: alpine:3.20
+
+jobs:
+  terminal-node:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3600
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Start Alpine terminal container
+        run: |
+          set -euo pipefail
+          docker pull "${DESKTOP_IMAGE}"
+          docker rm -f "${CONTAINER_NAME}" 2>/dev/null || true
+          docker run -d --name "${CONTAINER_NAME}" \
+            -p "${SSH_PORT}:22" \
+            -p "8765:8765" \
+            "${DESKTOP_IMAGE}" \
+            sleep infinity
+
+          docker exec "${CONTAINER_NAME}" sh -euc '
+            apk add --no-cache \
+              openssh-server openssh-client \
+              python3 py3-pip py3-psutil \
+              bash curl ca-certificates sudo \
+              git jq procps
+            ssh-keygen -A
+            mkdir -p /var/run/sshd
+            sed -i "s/#PermitRootLogin.*/PermitRootLogin no/" /etc/ssh/sshd_config
+            sed -i "s/#PasswordAuthentication.*/PasswordAuthentication yes/" /etc/ssh/sshd_config
+            printf "%s\n" "PermitEmptyPasswords no" >> /etc/ssh/sshd_config
+            /usr/sbin/sshd
+            ss -tlnp | grep ":22 "
+          '
+
+      - name: Create SSH user
+        env:
+          SSH_PASSWORD: ${{ secrets.TERMINAL_SSH_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SSH_PASSWORD:-}" ]; then
+            echo "Set repo secret TERMINAL_SSH_PASSWORD (or export for local act testing)."
+            exit 1
+          fi
+          docker exec \
+            -e SSH_USERNAME="${SSH_USERNAME}" \
+            -e SSH_PASSWORD="${SSH_PASSWORD}" \
+            "${CONTAINER_NAME}" sh -euc '
+            id "${SSH_USERNAME}" >/dev/null 2>&1 || adduser -D -s /bin/bash "${SSH_USERNAME}"
+            echo "${SSH_USERNAME}:${SSH_PASSWORD}" | chpasswd
+            echo "${SSH_USERNAME} ALL=(ALL) ALL" >> /etc/sudoers
+          '
+          echo "SSH user: ${SSH_USERNAME}"
+
+      - name: Install and start fleet agent
+        env:
+          FLEET_AGENT_TOKEN: ${{ secrets.FLEET_AGENT_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${FLEET_AGENT_TOKEN:-}" ]; then
+            echo "FLEET_AGENT_TOKEN secret missing — SSH only (no remote exec API)."
+            exit 0
+          fi
+          test -f fleet-control/fleet-agent/server.py
+          docker cp fleet-control/fleet-agent "${CONTAINER_NAME}:/opt/fleet-agent"
+          docker exec "${CONTAINER_NAME}" sh -euc '
+            pip3 install --no-cache-dir -r /opt/fleet-agent/requirements.txt
+          '
+          docker exec -d \
+            -e FLEET_AGENT_TOKEN="${FLEET_AGENT_TOKEN}" \
+            -e FLEET_AGENT_PORT=8765 \
+            -e FLEET_RDP_USER="${SSH_USERNAME}" \
+            "${CONTAINER_NAME}" \
+            python3 /opt/fleet-agent/server.py
+          sleep 2
+          docker exec "${CONTAINER_NAME}" sh -euc 'curl -fsS http://127.0.0.1:8765/health | grep -q ok'
+          echo "Fleet agent listening on :8765"
+
+      - name: Install Tailscale (optional)
+        if: ${{ secrets.TAILSCALE_AUTH_KEY != '' }}
+        run: curl -fsSL https://tailscale.com/install.sh | sh
+
+      - name: Tailscale up
+        if: ${{ secrets.TAILSCALE_AUTH_KEY != '' }}
+        run: |
+          set -euo pipefail
+          sudo tailscale up \
+            --authkey="${{ secrets.TAILSCALE_AUTH_KEY }}" \
+            --hostname="gh-terminal-${GITHUB_RUN_ID}"
+          ts_ip=""
+          retries=0
+          while [ -z "$ts_ip" ] && [ "$retries" -lt 12 ]; do
+            ts_ip="$(tailscale ip -4 2>/dev/null || true)"
+            [ -n "$ts_ip" ] || { sleep 5; retries=$((retries + 1)); }
+          done
+          test -n "$ts_ip"
+          echo "TAILSCALE_IP=$ts_ip" >> "$GITHUB_ENV"
+          printf "mode=tailscale\nip=%s\nagent_port=8765\nssh_port=%s\n" "$ts_ip" "${SSH_PORT}" > fleet-connect.txt
+          echo "$ts_ip" > tailscale-ip.txt
+
+      - name: Cloudflare quick tunnel (no Tailscale)
+        if: ${{ secrets.TAILSCALE_AUTH_KEY == '' && secrets.FLEET_AGENT_TOKEN != '' }}
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /tmp/cloudflared.deb \
+            https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+          sudo dpkg -i /tmp/cloudflared.deb
+          cloudflared tunnel --url "http://127.0.0.1:8765" > /tmp/cf-tunnel.log 2>&1 &
+          url=""
+          for _ in $(seq 1 30); do
+            url="$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' /tmp/cf-tunnel.log | head -n1 || true)"
+            [ -n "$url" ] && break
+            sleep 2
+          done
+          if [ -z "$url" ]; then
+            echo "Cloudflare quick tunnel URL not found; log:"
+            tail -n 40 /tmp/cf-tunnel.log || true
+            exit 1
+          fi
+          echo "CF_TUNNEL_URL=$url" >> "$GITHUB_ENV"
+          printf "mode=cloudflare_quick\nurl=%s\nagent_port=8765\nnote=ephemeral trycloudflare URL\n" "$url" > fleet-connect.txt
+          echo "n/a" > tailscale-ip.txt
+
+      - name: Require reachability mode
+        run: |
+          set -euo pipefail
+          if [ -f fleet-connect.txt ]; then
+            cat fleet-connect.txt
+            exit 0
+          fi
+          echo "Need TAILSCALE_AUTH_KEY and/or FLEET_AGENT_TOKEN (for Cloudflare quick tunnel fallback)."
+          exit 1
+
+      - name: Publish connect artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: tailscale-ip
+          path: tailscale-ip.txt
+          retention-days: 1
+
+      - name: Publish fleet-connect artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fleet-connect
+          path: fleet-connect.txt
+          retention-days: 1
+
+      - name: Verify SSH and agent
+        env:
+          FLEET_AGENT_TOKEN: ${{ secrets.FLEET_AGENT_TOKEN }}
+        run: |
+          set -euo pipefail
+          timeout 30 bash -c "until nc -z 127.0.0.1 ${SSH_PORT}; do sleep 1; done"
+          if [ -n "${FLEET_AGENT_TOKEN:-}" ]; then
+            timeout 30 bash -c "until curl -fsS http://127.0.0.1:8765/health | grep -q ok; do sleep 1; done"
+          fi
+          if [ -n "${TAILSCALE_IP:-}" ]; then
+            timeout 60 bash -c "until nc -z ${TAILSCALE_IP} ${SSH_PORT}; do sleep 2; done"
+          fi
+
+      - name: Maintain connection
+        env:
+          FLEET_AGENT_TOKEN: ${{ secrets.FLEET_AGENT_TOKEN }}
+        run: |
+          echo ""
+          echo "=== TERMINAL FLEET NODE (Alpine) ==="
+          if [ -n "${TAILSCALE_IP:-}" ]; then
+            echo "SSH: ${TAILSCALE_IP}:${SSH_PORT} user ${SSH_USERNAME}"
+            echo "Agent: http://${TAILSCALE_IP}:8765 (Bearer FLEET_AGENT_TOKEN)"
+          fi
+          if [ -n "${CF_TUNNEL_URL:-}" ]; then
+            echo "Agent (CF quick tunnel): ${CF_TUNNEL_URL}"
+          fi
+          echo "Cancel workflow run to terminate."
+          echo "===================================="
+          echo ""
+
+          if [ -n "${FLEET_AGENT_TOKEN:-}" ]; then
+            (
+              while true; do
+                if ! curl -fsS --max-time 3 "http://127.0.0.1:8765/health" 2>/dev/null | grep -q '"ok"'; then
+                  echo "[$(date -Is)] fleet-agent unhealthy — restart"
+                  docker exec "${CONTAINER_NAME}" pkill -f "python3 /opt/fleet-agent/server.py" 2>/dev/null || true
+                  sleep 1
+                  docker exec -d \
+                    -e FLEET_AGENT_TOKEN="${FLEET_AGENT_TOKEN}" \
+                    -e FLEET_AGENT_PORT=8765 \
+                    -e FLEET_RDP_USER="${SSH_USERNAME}" \
+                    "${CONTAINER_NAME}" \
+                    python3 /opt/fleet-agent/server.py
+                fi
+                sleep 45
+              done
+            ) &
+          fi
+
+          while true; do
+            echo "[$(date -Is)] terminal node active"
+            sleep 300
+          done

@@ -11,4 +11,4 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Info
-        run: echo "No default CI. Run workflow_dispatch on RDP Windows or RDP Alpine Openbox."
+        run: echo "No default CI. Dispatch RDP Windows, rdp-alpine-openbox.yml, or terminal-fleet-alpine.yml."

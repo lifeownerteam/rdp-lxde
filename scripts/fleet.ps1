@@ -46,6 +46,10 @@ Fleet self-service (from repo root)
   .\scripts\fleet.ps1 watch [--target 8] [--interval 120] [--once] [--dry-run]
   .\scripts\fleet-watch.ps1 [-Poll]              # gh switch + watch --once (for Automations)
   .\scripts\fleet.ps1 gui                      # npm run gui (unchanged dashboard)
+  node fleet-control\cli.js cluster health     # parallel health on all LIVE agents
+  node fleet-control\cli.js cluster exec "cmd" # run shell on entire fleet
+
+Terminal-only workflow: set workflow_id to terminal-fleet-alpine.yml (see TERMINAL-FLEET-EL.md).
 
 Config: fleet-control\config.json
 Tailscale API: fleet-control\.tailscale-api-key (gitignored)

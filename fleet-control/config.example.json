@@ -5,6 +5,16 @@
   "max_concurrent_dispatch_per_account": 8,
   "workflow_id": "rdp-alpine-openbox.yml",
   "workflow_name": "RDP Linux Desktop (LXDE)",
+  "workflow_profiles": {
+    "desktop_lxde": {
+      "workflow_id": "rdp-alpine-openbox.yml",
+      "workflow_name": "RDP Linux Desktop (LXDE)"
+    },
+    "terminal_alpine": {
+      "workflow_id": "terminal-fleet-alpine.yml",
+      "workflow_name": "Terminal Fleet (Alpine SSH)"
+    }
+  },
   "poll_interval_seconds": 30,
   "accounts": [
     {

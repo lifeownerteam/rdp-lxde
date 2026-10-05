@@ -39,6 +39,10 @@ switch ($cmd) {
   "secrets" { & $Wrapper secrets @rest; exit $LASTEXITCODE }
   "setup" { & $Wrapper setup @rest; exit $LASTEXITCODE }
   "watch" { & $Wrapper watch @rest; exit $LASTEXITCODE }
+  "cluster" {
+    & node $Cli cluster @rest
+    exit $LASTEXITCODE
+  }
 }
 
 $Cli = Join-Path $Root "cli.js"
